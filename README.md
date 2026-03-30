@@ -1,2 +1,2 @@
 # CV-Accessibility-of-Public-Transport
-Capston Project
+Capstone Project
