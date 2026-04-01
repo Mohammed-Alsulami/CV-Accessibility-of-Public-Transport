@@ -6,57 +6,135 @@ function App() {
   const [result, setResult] = useState("");
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
-    setFile(selectedFile);
+    const selected = e.target.files[0];
+    setFile(selected);
 
-    if (selectedFile) {
-      setPreview(URL.createObjectURL(selectedFile));
+    if (selected) {
+      setPreview(URL.createObjectURL(selected));
+      setResult("");
     }
   };
 
   const handleSubmit = () => {
-    // placeholder result (later this will call FastAPI)
-    setResult("Tactile flooring detected near platform edge");
+    setResult("Tactile flooring detected near platform edge (mock result)");
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "Arial" }}>
+    <div style={styles.page}>
       
-      <h1>Accessibility Audit Tool</h1>
+      {/* Header */}
+      <div style={styles.header}>
+        <h1 style={styles.title}>Accessibility Audit Tool</h1>
+        <p style={styles.subtitle}>
+          Detect accessibility features in public transport environments
+        </p>
+      </div>
 
-      <p>Upload an image of a tram or train stop.</p>
+      {/* Main Card */}
+      <div style={styles.card}>
+        
+        <input
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          style={styles.input}
+        />
 
-      <input type="file" accept="image/*" onChange={handleFileChange} />
+        {preview && (
+          <div style={styles.previewBox}>
+            <img src={preview} alt="preview" style={styles.image} />
+          </div>
+        )}
 
-      <br /><br />
+        <button
+          onClick={handleSubmit}
+          disabled={!file}
+          style={{
+            ...styles.button,
+            opacity: file ? 1 : 0.5,
+            cursor: file ? "pointer" : "not-allowed",
+          }}
+        >
+          Run Analysis
+        </button>
 
-      {preview && (
-        <div>
-          <h3>Preview:</h3>
-          <img
-            src={preview}
-            alt="preview"
-            style={{ width: "300px", borderRadius: "8px" }}
-          />
-        </div>
-      )}
-
-      <br />
-
-      <button onClick={handleSubmit} disabled={!file}>
-        Run Analysis
-      </button>
-
-      <br /><br />
-
-      {result && (
-        <div style={{ padding: "10px", background: "#f0f0f0" }}>
-          <h3>Result:</h3>
-          <p>{result}</p>
-        </div>
-      )}
+        {result && (
+          <div style={styles.resultBox}>
+            <h3 style={{ margin: 0 }}>Result</h3>
+            <p style={{ marginTop: 8 }}>{result}</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+const styles = {
+  page: {
+    fontFamily: "Arial, sans-serif",
+    background: "#f5f9ff",
+    minHeight: "100vh",
+    padding: "40px",
+  },
+
+  header: {
+    textAlign: "center",
+    marginBottom: "30px",
+  },
+
+  title: {
+    color: "#2d88ff",
+    marginBottom: "5px",
+  },
+
+  subtitle: {
+    color: "#555",
+    fontSize: "14px",
+  },
+
+  card: {
+    maxWidth: "500px",
+    margin: "0 auto",
+    background: "#fff",
+    padding: "25px",
+    borderRadius: "12px",
+    boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
+    textAlign: "center",
+  },
+
+  input: {
+    marginBottom: "20px",
+  },
+
+  previewBox: {
+    marginBottom: "20px",
+  },
+
+  image: {
+    width: "100%",
+    borderRadius: "10px",
+    border: "2px solid #e6f0ff",
+  },
+
+  button: {
+    background: "#2d88ff",
+    color: "white",
+    border: "none",
+    padding: "12px 18px",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "bold",
+    transition: "0.2s",
+  },
+
+  resultBox: {
+    marginTop: "20px",
+    padding: "15px",
+    background: "#eaf2ff",
+    borderRadius: "10px",
+    borderLeft: "4px solid #2d88ff",
+    textAlign: "left",
+  },
+};
 
 export default App;
