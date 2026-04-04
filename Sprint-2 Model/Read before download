@@ -1,1 +1,8 @@
 Instructions to use the model:
+if you cannot import the libraries use this command:
+
+'!pip install opencv-python scikit-learn matplotlib joblib numpy'
+
+you can change the picture from the calling function at the end of the python code.(From 'test1' to 'test2' or any picture.
+
+this model is not 100% accurate. it needs more training with many pictures.
