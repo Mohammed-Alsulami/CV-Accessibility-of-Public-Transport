@@ -1,7 +1,7 @@
 from function import detect_tactile_with_trained_model
 import os
 
-IMAGE_PATH = "test4.jpg"
+IMAGE_PATH = "test6.jpg"
 MODEL_PATH = "tactile_svm.pkl"
 
 # ✅ Safety checks
