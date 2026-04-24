@@ -9,33 +9,20 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // OPEN FILE PICKER
-  const handleUploadClick = () => {
-    fileInputRef.current.click();
-  };
+  const handleUploadClick = () => fileInputRef.current.click();
 
-  // FILE SELECT
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
+    const f = e.target.files?.[0];
+    if (!f) return;
 
-    if (!selectedFile) return;
-
-    setFile(selectedFile);
-    setPreview(URL.createObjectURL(selectedFile));
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
     setReport(null);
     setError(null);
-
-    console.log("📁 FILE SELECTED:", selectedFile.name);
   };
 
-  // 🔥 ANALYSE FUNCTION (FULL DEBUG VERSION)
   const handleAnalyse = async () => {
-    console.log("🔥 ANALYSE CLICKED");
-
-    if (!file) {
-      alert("Please upload a file first");
-      return;
-    }
+    if (!file) return alert("Upload an image first");
 
     setLoading(true);
     setError(null);
@@ -44,164 +31,220 @@ export default function HomePage() {
       const formData = new FormData();
       formData.append("file", file);
 
-      console.log("📤 Sending to backend...");
-
-      const response = await fetch("http://127.0.0.1:8000/analyze", {
+      const res = await fetch("http://127.0.0.1:8000/analyze", {
         method: "POST",
         body: formData,
       });
 
-      console.log("📡 RESPONSE STATUS:", response.status);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Analysis failed");
 
-      const data = await response.json();
-
-      console.log("📦 BACKEND RESPONSE:", data);
-
-      if (!response.ok) {
-        throw new Error(data.detail || "Backend error");
-      }
-
-      setReport({
-        message: data.status || "No status returned",
-        features: data.features || {},
-        image: preview,
-      });
-
+      setReport(data);
     } catch (err) {
-      console.error("❌ ANALYSE ERROR:", err);
-      setError(err.message || "Unknown error connecting to backend");
+      setError(err.message);
     }
 
     setLoading(false);
   };
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#f3f4f6", display: "flex", flexDirection: "column", alignItems: "center" }}>
-      
-      {/* NAVBAR */}
-      <div style={{ width: "100%", backgroundColor: "#e5e7eb", display: "flex", justifyContent: "space-between", padding: "12px 32px" }}>
-        <img src="/logo-left.png" alt="logo" style={{ height: "32px" }} />
-        <img src="/logo-center.png" alt="logo" style={{ height: "36px" }} />
-        <div style={{ width: "80px", height: "24px", backgroundColor: "black", borderRadius: "999px" }} />
-      </div>
+    <div style={styles.page}>
 
-      {/* MAIN CONTENT */}
-      <div style={{ width: "100%", maxWidth: "1100px", backgroundColor: "white", marginTop: "16px", padding: "32px", borderRadius: "16px" }}>
-        
-        <h2 style={{ fontSize: "28px", color: "#3b82f6", fontWeight: "700" }}>
-          AI Accessibility Audit Tool
-        </h2>
-
-        <p style={{ color: "#4b5563" }}>
-          Upload transport images and get instant accessibility analysis.
-        </p>
-
-        {/* ERROR BOX */}
-        {error && (
-          <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#fee2e2", color: "#b91c1c", borderRadius: "8px" }}>
-            ❌ {error}
-          </div>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "32px", marginTop: "24px" }}>
-          
-          {/* LEFT */}
-          <div>
-            <h3>Steps</h3>
-            <ol>
-              <li>Upload image</li>
-              <li>Click Analyse</li>
-              <li>View results</li>
-            </ol>
-          </div>
-
-          {/* RIGHT */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            
-            {/* UPLOAD */}
-            <div
-              onClick={handleUploadClick}
-              style={{
-                height: "180px",
-                backgroundColor: "#e5e7eb",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: "12px",
-                cursor: "pointer"
-              }}
-            >
-              Click to Upload
-              <input
-                ref={fileInputRef}
-                type="file"
-                style={{ display: "none" }}
-                onChange={handleFileChange}
-              />
-            </div>
-
-            {/* PREVIEW */}
-            {preview && (
-              <img
-                src={preview}
-                alt="preview"
-                style={{ width: "100%", borderRadius: "12px" }}
-              />
-            )}
-
-            {/* ANALYSE BUTTON */}
-            <button
-              onClick={handleAnalyse}
-              disabled={loading}
-              style={{
-                padding: "10px",
-                backgroundColor: loading ? "#9ca3af" : "#3b82f6",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                cursor: "pointer"
-              }}
-            >
-              {loading ? "Analyzing..." : "Analyse"}
-            </button>
-
-            {/* LOADING SPINNER */}
-            {loading && (
-              <p style={{ color: "#6b7280" }}>
-                ⏳ Processing image...
-              </p>
-            )}
-          </div>
+      {/* HEADER */}
+      <header style={styles.header}>
+        <div style={styles.headerInner}>
+          <img src="/white-logo.png" style={styles.logo} />
+          <div style={styles.title}>Accessibility Audit AI</div>
         </div>
+      </header>
 
-        {/* REPORT */}
-        {report && (
-          <div style={{ marginTop: "32px", padding: "20px", backgroundColor: "#f9fafb", borderRadius: "12px" }}>
-            
-            <h3>Report</h3>
+      {/* MAIN */}
+      <main style={styles.container}>
 
-            <p><b>Status:</b> {report.message}</p>
+        <section style={styles.card}>
+          <h2 style={styles.h2}>Analyse Infrastructure</h2>
+          <p style={styles.subtext}>Upload an image in order to identify tactile flooring and assess it's compliance with DSAPT standards.</p>
 
-            {report.features && (
-              <ul>
-                {Object.entries(report.features).map(([key, value]) => (
-                  <li key={key}>
-                    {key}: {String(value)}
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div onClick={handleUploadClick} style={styles.uploadBox}>
+            <input ref={fileInputRef} type="file" hidden onChange={handleFileChange} />
 
-            {report.image && (
-              <img
-                src={report.image}
-                alt="report"
-                style={{ width: "100%", marginTop: "12px", borderRadius: "12px" }}
-              />
+            {!preview ? (
+              <div style={styles.uploadState}>Click to upload image</div>
+            ) : (
+              <img src={preview} style={styles.preview} />
             )}
           </div>
+
+          <button onClick={handleAnalyse} disabled={loading} style={styles.button}>
+            {loading ? "Analysing..." : "Run Analysis"}
+          </button>
+
+          {error && <div style={styles.error}>{error}</div>}
+        </section>
+
+        {report && (
+          <section style={styles.card}>
+            <h2 style={styles.h2}>Results</h2>
+            <pre style={{ fontSize: 13 }}>{JSON.stringify(report, null, 2)}</pre>
+          </section>
         )}
-      </div>
+
+        <section style={styles.card}>
+          <h2 style={styles.h2}>About this project</h2>
+          <p style={styles.subtext}>
+            This project was developed as part of a university initiative focused on applying AI to real-world accessibility challenges. It reflects a commitment to improving accessibility and supporting people with disabilities, with the broader aim of contributing to more inclusive public spaces. In this context, the project explores how technology can support greater independence and inclusion in everyday travel.
+            <br/>
+            <br/>
+            The system is a proof-of-concept tool that uses computer vision to analyse public transport infrastructure and identify accessibility features and potential barriers. By processing images or video, it generates a structured, human-readable report to assist with accessibility assessment.
+            <br/>
+            <br/>
+            As an early-stage prototype, the system has a number of limitations. Detection accuracy is influenced by factors such as image quality, lighting, and camera angles. In addition, some features may still require manual verification, and the tool is not intended to replace formal compliance assessments.
+            
+          </p>
+        </section>
+
+      </main>
+
+      {/* FOOTER */}
+      <footer style={styles.footer}>
+        <div style={styles.footerInner}>
+          <div style={styles.footerTitle}>About us</div>
+          <div style={styles.footerText}>
+          This project was developed by a small team of university students passionate about accessibility and inclusive design. Combining skills in AI, computer vision, and software development, the team set out to explore practical ways technology can improve everyday public transport experiences. Their goal is to create tools that support greater independence and accessibility for all users.          </div>
+        </div>
+      </footer>
+
     </div>
   );
 }
+
+/* ---------------- STYLES ---------------- */
+
+const styles = {
+  page: {
+    fontFamily: "Arial",
+    background: "#f8fafc",
+    overflowX: "hidden",
+  },
+
+  /* DARK GREY HEADER */
+  header: {
+    background: "#212121",
+    color: "#fff",
+    borderBottom: "1px solid #111827",
+  },
+
+  headerInner: {
+    maxWidth: 1100,
+    margin: "0 auto",
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr",
+    alignItems: "center",
+    padding: "14px 16px",
+  },
+
+  logo: {
+    height: 28,
+    objectFit: "contain",
+  },
+
+  title: {
+    textAlign: "center",
+    fontWeight: 700,
+    fontSize: 18,
+    color: "#ffffff",
+  },
+
+  container: {
+    maxWidth: 1100,
+    margin: "0 auto",
+    padding: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
+  },
+
+  card: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: 20,
+  },
+
+  h2: {
+    fontSize: 17,
+    fontWeight: 600,
+    marginBottom: 10,
+  },
+
+  subtext: {
+    fontSize: 14.5,
+    color: "#4b5563",
+    lineHeight: 1.6,
+  },
+
+  uploadBox: {
+    height: 260,
+    background: "#f1f5f9",
+    border: "1px dashed #cbd5e1",
+    borderRadius: 14,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    overflow: "hidden",
+  },
+
+  uploadState: { color: "#64748b" },
+
+  preview: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+
+  button: {
+    marginTop: 12,
+    width: "100%",
+    padding: 11,
+    background: "#2563eb",
+    color: "#fff",
+    border: 0,
+    borderRadius: 10,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+
+  error: {
+    marginTop: 10,
+    background: "#fee2e2",
+    color: "#b91c1c",
+    padding: 10,
+    borderRadius: 10,
+  },
+
+  /* DARK GREY FOOTER */
+  footer: {
+    marginTop: 30,
+    background: "#212121",
+    color: "#e5e7eb",
+    padding: "28px 16px",
+  },
+
+  footerInner: {
+    maxWidth: 1100,
+    margin: "0 auto",
+  },
+
+  footerTitle: {
+    fontWeight: 700,
+    marginBottom: 10,
+    color: "#ffffff",
+  },
+
+  footerText: {
+    fontSize: 14.5,
+    lineHeight: 1.7,
+    color: "#d1d5db",
+  },
+};
