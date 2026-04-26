@@ -1,6 +1,11 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from database import init_db, save_analysis, get_all_analyses
+from database import (
+    init_db,
+    save_user_input_image,
+    save_analysis_output,
+    get_all_outputs,
+)
 
 app = FastAPI()
 
@@ -23,20 +28,35 @@ def home():
 async def analyze(file: UploadFile = File(...)):
     print("✅ FILE RECEIVED:", file.filename)
 
-    # dummy response (your AI will go here later)
-    status = "Partially Accessible"
-    features = {
-        "ramp": "Yes",
-        "stairs": "Yes",
-        "pathway": "Narrow",
-        "signage": "Missing",
+    image_bytes = await file.read()
+
+    # Save the raw user upload
+    input_id = save_user_input_image(file.filename, image_bytes)
+
+    # ── AI model goes here ──────────────────────────────────────────────────
+    # Replace the dummy values below once the model is integrated.
+    has_tactile_flooring = 0          # 0 = No, 1 = Yes
+    compatibility_percentage = None   # populated by model
+    output_image_data = None          # annotated output image bytes from model
+    report_pdf = None                 # PDF report bytes from model
+    # ────────────────────────────────────────────────────────────────────────
+
+    output_id = save_analysis_output(
+        input_image_id=input_id,
+        output_image_data=output_image_data,
+        has_tactile_flooring=has_tactile_flooring,
+        compatibility_percentage=compatibility_percentage,
+        report_pdf=report_pdf,
+    )
+
+    return {
+        "input_image_id": input_id,
+        "output_id": output_id,
+        "has_tactile_flooring": bool(has_tactile_flooring),
+        "compatibility_percentage": compatibility_percentage,
     }
-
-    save_analysis(file.filename, status, features)
-
-    return {"status": status, "features": features}
 
 
 @app.get("/analyses")
 def list_analyses():
-    return get_all_analyses()
+    return get_all_outputs()
