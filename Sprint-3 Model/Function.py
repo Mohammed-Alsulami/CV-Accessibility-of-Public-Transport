@@ -107,6 +107,22 @@ def main():
     plt.axis("off")
     plt.show()
 
+def pdf_report(pdf_content, output_path="report_output.pdf", template_path="pdf_template.pdf"):
+    """Fill pdf_template.pdf with pdf_content values and save to output_path.
+
+    pdf_content keys: date, image_file, detection_result, detected_pixels,
+                      inference_time, fps, notes (optional)
+    """
+    import io
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.colors import HexColor, black
+    from pdfrw import PdfReader, PdfWriter, PageMerge
+
+    return "PDF generation not implemented yet."
+
+
+
 
 if __name__ == "__main__":
     main()
