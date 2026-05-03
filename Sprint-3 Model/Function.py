@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import time
 import numpy as np
@@ -106,6 +107,88 @@ def main():
     plt.title(f"Tactile flooring detected: {result}")
     plt.axis("off")
     plt.show()
+
+def pdf_report(input_image, processed_image, dsapt_compliance_score, notes,
+               output_path="output_report.pdf", template_path="Report_Template.pdf"):
+    import io
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    from pdfrw import PdfReader, PdfWriter, PageMerge
+
+    PAGE_W, PAGE_H = 612, 792
+
+    # Convert input to PIL Image (accepts file path, PIL Image, or numpy array)
+    def to_pil(img_input):
+        if isinstance(img_input, np.ndarray):
+            return Image.fromarray(img_input.astype(np.uint8)).convert("RGB")
+        if isinstance(img_input, Image.Image):
+            return img_input.convert("RGB")
+        if isinstance(img_input, str) and os.path.exists(img_input):
+            return Image.open(img_input).convert("RGB")
+        return None
+
+    def draw_image_in_cell(c, pil_img, cell_x, cell_y_bottom, cell_w, cell_h, padding=4):
+        iw, ih = pil_img.size
+        max_w = cell_w - 2 * padding
+        max_h = cell_h - 2 * padding
+        scale = min(max_w / iw, max_h / ih)
+        draw_w, draw_h = iw * scale, ih * scale
+        draw_x = cell_x + (cell_w - draw_w) / 2
+        draw_y = cell_y_bottom + (cell_h - draw_h) / 2
+        c.drawImage(ImageReader(pil_img), draw_x, draw_y, draw_w, draw_h)
+
+    def draw_wrapped_text(c, text, x, y, max_width, font_name, font_size, line_height):
+        words = str(text).split()
+        lines, current = [], ""
+        for word in words:
+            test = (current + " " + word).strip()
+            if c.stringWidth(test, font_name, font_size) <= max_width:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        for line in lines:
+            c.drawString(x, y, line)
+            y -= line_height
+
+    packet = io.BytesIO()
+    c = canvas.Canvas(packet, pagesize=(PAGE_W, PAGE_H))
+
+    # Date
+    c.setFont("Helvetica", 11)
+    c.drawString(205.33, 465.15, datetime.now().strftime("%d/%m/%Y"))
+
+    # Input image (cell: x=205–540, y=355–455)
+    pil_in = to_pil(input_image)
+    if pil_in:
+        draw_image_in_cell(c, pil_in, 205.33, 355, 540 - 205.33, 100)
+
+    # Processed/output image (cell: x=205–540, y=218–340)
+    pil_out = to_pil(processed_image)
+    if pil_out:
+        draw_image_in_cell(c, pil_out, 205.33, 218, 540 - 205.33, 122)
+
+    # DSAPT Compliance Score
+    c.setFont("Helvetica", 11)
+    c.drawString(205.33, 210.58, f"{dsapt_compliance_score}%")
+
+    # Notes (wrapped)
+    draw_wrapped_text(c, notes, 205.33, 185.55, 335, "Helvetica", 10, 12)
+
+    c.save()
+    packet.seek(0)
+
+    template = PdfReader(template_path)
+    overlay_pdf = PdfReader(packet)
+    PageMerge(template.pages[0]).add(overlay_pdf.pages[0]).render()
+    PdfWriter(output_path, trailer=template).write()
+
+    return output_path
+
+
 
 
 if __name__ == "__main__":
