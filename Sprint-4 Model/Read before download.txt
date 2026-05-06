@@ -1,0 +1,21 @@
+Instructions to use the model:
+
+If the libraries cannot be imported, install them using this command:
+
+pip3 install torch torchvision numpy pillow opencv-python opencv-contrib-python matplotlib reportlab pdfrw
+
+Example for image input:
+INPUT_PATH = ".../test1.jpg"
+
+Example for video input:
+INPUT_PATH = ".../test1.mp4"
+
+The model supports both images and videos.
+
+The output will include:
+- Tactile flooring detection result
+- Detected pixels
+- Estimated luminance contrast
+- DSAPT compatibility score
+- A generated PDF report
+

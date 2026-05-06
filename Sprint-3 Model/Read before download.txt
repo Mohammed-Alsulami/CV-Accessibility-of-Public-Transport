@@ -1,8 +1,0 @@
-Instructions to use the model:
-you cannot import the libraries, use this command:
-
-'pip3 install torch torchvision numpy pillow opencv-python opencv-contrib-python matplotlib'
-
-you can change the picture from the calling function at the end of the python code.(From 'test1' to 'test2' or any picture.
-
-this model is the draft of the final model.
