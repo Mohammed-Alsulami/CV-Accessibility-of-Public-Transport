@@ -24,6 +24,10 @@ yarn-error.log*
 __pycache__/
 *.pyc
 
+# Large generated/runtime files — too big for GitHub
+*.db
+backend/model/output_report.pdf
+
 # OS files
 .DS_Store
 Thumbs.db
