@@ -1,0 +1,40 @@
+# ============================================================
+# Backend Python dependencies
+# ============================================================
+# Install all at once:
+#   pip install -r requirements.txt
+#
+# PyTorch note: the lines below install the CPU-only build.
+# For GPU/CUDA support, install PyTorch separately first:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# then re-run this file.
+# ============================================================
+
+# Web framework + ASGI server
+fastapi==0.135.2
+uvicorn==0.46.0
+pydantic==2.12.5
+
+# AI model — deep learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Computer vision + numerical computing
+numpy>=1.24.0
+opencv-python>=4.8.0
+matplotlib>=3.7.0
+
+# Image processing
+Pillow==12.2.0
+
+# PDF report generation
+reportlab==4.2.5
+pdfrw==0.4
+
+# ============================================================
+# Frontend (Node.js / React)
+# ============================================================
+# Dependencies are managed by npm via frontend/package.json.
+# Run separately:  cd frontend && npm install
+# Or use start.sh at the project root to handle everything.
+# ============================================================
