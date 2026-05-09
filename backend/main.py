@@ -12,7 +12,6 @@ from database import (
 
 import base64
 import os
-import sys
 import numpy as np
 
 def safe(v):
@@ -22,18 +21,7 @@ def safe(v):
         return int(v)
     return v
 
-# ADD SPRINT-4 MODEL FOLDER TO PYTHON PATH
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-MODEL_DIR = os.path.abspath(
-    os.path.join(CURRENT_DIR, "../../Sprint-4 Model")
-)
-
-sys.path.append(MODEL_DIR)
-
-
-# IMPORT AI FUNCTION
-from Function import analyze_uploaded_file
+from model.function import analyze_uploaded_file
 
 
 app = FastAPI()

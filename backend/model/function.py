@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import io
 import tempfile
 
-from src import GRFBUNet
+from .src import GRFBUNet
 
 
 # USER SETTINGS - CHANGE THESE ONLY
@@ -19,7 +19,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 INPUT_PATH = ""
 
-MODEL_PATH = os.path.join(BASE_DIR, "model", "model.pth")
+MODEL_PATH = os.path.join(BASE_DIR, "weights", "model.pth")
 
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Report_Template.pdf")
 
