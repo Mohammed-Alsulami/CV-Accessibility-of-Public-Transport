@@ -10,29 +10,35 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
-# ── Backend ────────────────────────────────────────────────
+# ── Backend Python dependencies ────────────────────────────
 echo ""
 echo "Installing backend Python dependencies..."
 pip install -r requirements.txt
 
-# ── Frontend ───────────────────────────────────────────────
+# ── Frontend Node.js dependencies ─────────────────────────
 echo ""
 echo "Installing frontend Node.js dependencies..."
 (cd frontend && npm install)
 
-# ── Start servers ──────────────────────────────────────────
+# ── Clear ports if already occupied ───────────────────────
+lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+lsof -ti :3000 | xargs kill -9 2>/dev/null || true
+
+# ── Start backend ──────────────────────────────────────────
 echo ""
 echo "Starting backend  →  http://localhost:8000"
-(cd backend && uvicorn main:app --reload) &
+echo "(first start may take ~15 seconds while PyTorch loads)"
+(cd backend && python -m uvicorn main:app --reload) &
 BACKEND_PID=$!
 
+# ── Start frontend ─────────────────────────────────────────
 echo "Starting frontend →  http://localhost:3000"
 (cd frontend && npm start) &
 FRONTEND_PID=$!
 
 echo ""
-echo "Both servers are running. Press Ctrl+C to stop."
+echo "Both servers are running. Press Ctrl+C to stop both."
 
-# Cleanly kill both servers on exit
+# Cleanly stop both servers on Ctrl+C
 trap "echo ''; echo 'Stopping servers...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
 wait

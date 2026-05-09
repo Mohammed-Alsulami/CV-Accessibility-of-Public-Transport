@@ -1,7 +1,6 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.encoders import jsonable_encoder
 
 from database import (
     init_db,
@@ -11,8 +10,11 @@ from database import (
 )
 
 import base64
-import os
+import traceback
 import numpy as np
+
+from model.function import analyze_uploaded_file
+
 
 def safe(v):
     if isinstance(v, (np.float32, np.float64)):
@@ -20,8 +22,6 @@ def safe(v):
     if isinstance(v, (np.int32, np.int64)):
         return int(v)
     return v
-
-from model.function import analyze_uploaded_file
 
 
 app = FastAPI()
@@ -46,22 +46,23 @@ async def analyze(file: UploadFile = File(...)):
 
     print("✅ FILE RECEIVED:", file.filename)
 
-    # Read uploaded file
     image_bytes = await file.read()
 
-    # Save original uploaded image
-    input_id = save_user_input_image(
-        file.filename,
-        image_bytes
-    )
+    input_id = save_user_input_image(file.filename, image_bytes)
 
-    # RUN AI MODEL
-    result = analyze_uploaded_file(
-        image_bytes,
-        file.filename
-    )
+    # Also encode the original image so the frontend can display it
+    input_image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    # Save analysis result to database
+    try:
+        result = analyze_uploaded_file(image_bytes, file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
     output_id = save_analysis_output(
         input_image_id=input_id,
         output_image_data=result["output_image_data"],
@@ -70,18 +71,10 @@ async def analyze(file: UploadFile = File(...)):
         report_pdf=result["report_pdf"],
     )
 
-    # Convert image bytes to base64
-    output_image_base64 = base64.b64encode(
-        result["output_image_data"]
-    ).decode("utf-8")
+    output_image_base64 = base64.b64encode(result["output_image_data"]).decode("utf-8")
+    pdf_base64 = base64.b64encode(result["report_pdf"]).decode("utf-8")
 
-    # Convert PDF bytes to base64
-    pdf_base64 = base64.b64encode(
-        result["report_pdf"]
-    ).decode("utf-8")
-
-    # Return results to frontend
-    clean_response = {
+    return JSONResponse(content={
         "input_image_id": safe(input_id),
         "output_id": safe(output_id),
         "has_tactile_flooring": bool(result["has_tactile_flooring"]),
@@ -89,11 +82,10 @@ async def analyze(file: UploadFile = File(...)):
         "compatibility_label": str(result["compatibility_label"]),
         "contrast_percentage": safe(result["contrast_percentage"]),
         "notes": str(result["notes"]),
+        "input_image": input_image_base64,
         "output_image": output_image_base64,
         "report_pdf": pdf_base64,
-    }
-
-    return JSONResponse(content=clean_response)
+    })
 
 
 @app.get("/analyses")
