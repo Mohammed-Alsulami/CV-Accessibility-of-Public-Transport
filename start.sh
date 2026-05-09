@@ -4,11 +4,13 @@
 
 set -e
 
-# Activate project virtual environment if present
-if [ -d ".venv" ]; then
-    echo "Activating virtual environment..."
-    source .venv/bin/activate
+# Create virtual environment if missing, then activate it
+if [ ! -d ".venv" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv .venv
 fi
+echo "Activating virtual environment..."
+source .venv/bin/activate
 
 # ── Backend Python dependencies ────────────────────────────
 echo ""
