@@ -7,19 +7,23 @@ import torch
 from PIL import Image
 from torchvision import transforms
 import matplotlib.pyplot as plt
+import io
+import tempfile
 
 from src import GRFBUNet
 
 
 # USER SETTINGS - CHANGE THESE ONLY
 
-INPUT_PATH = '/Users/mohammed-alsulami/Documents/GitHub/CV-Accessibility-of-Public-Transport/Sprint-3 Model/Test Model img-vids/test1.mp4'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = "/Users/mohammed-alsulami/Documents/GitHub/CV-Accessibility-of-Public-Transport/Sprint-3 Model/Model/model.pth"
+INPUT_PATH = ""
 
-TEMPLATE_PATH = '/Users/mohammed-alsulami/Documents/GitHub/CV-Accessibility-of-Public-Transport/Sprint-3 Model/Report_Template.pdf'
+MODEL_PATH = os.path.join(BASE_DIR, "model", "model.pth")
 
-OUTPUT_PDF_PATH = "/Users/mohammed-alsulami/Documents/GitHub/CV-Accessibility-of-Public-Transport/Sprint-3 Model/output_report.pdf"
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Report_Template.pdf")
+
+OUTPUT_PDF_PATH = os.path.join(BASE_DIR, "output_report.pdf")
 
 THRESHOLD = 500
 
@@ -574,6 +578,126 @@ def main():
 
     print(f"PDF report generated successfully: {report_path}")
 
+# FastAPI Analysis Function
+def analyze_uploaded_file(file_bytes, filename):
+    """
+    Runs the AI model on an uploaded image or video file.
+    Returns analysis results, processed image bytes, and PDF bytes.
+    """
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    # Check required files
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
+
+    if not os.path.exists(TEMPLATE_PATH):
+        raise FileNotFoundError(f"PDF template not found: {TEMPLATE_PATH}")
+
+    # Load model
+    model = load_model(MODEL_PATH, device)
+
+    # Create temporary uploaded file
+    suffix = os.path.splitext(filename)[1]
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        temp_file.write(file_bytes)
+        temp_path = temp_file.name
+
+    try:
+
+        # Process image
+        if is_image_file(temp_path):
+
+            original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps = process_image(
+                image_path=temp_path,
+                model=model,
+                device=device,
+                threshold=THRESHOLD
+            )
+
+        # Process video
+        elif is_video_file(temp_path):
+
+            original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps = process_video(
+                video_path=temp_path,
+                model=model,
+                device=device,
+                threshold=THRESHOLD,
+                frame_interval_seconds=FRAME_INTERVAL_SECONDS,
+                max_video_seconds=MAX_VIDEO_SECONDS
+            )
+
+            if original_img is None:
+                raise ValueError("No valid video frames found.")
+
+        else:
+            raise ValueError("Unsupported file type.")
+
+        # Accessibility Feature
+        if result == "Yes":
+            accessibility_feature = "Accessibility Feature Detected: Tactile flooring"
+        else:
+            accessibility_feature = "No Accessibility Feature Detected"
+
+        # DSAPT Contrast-Based Report Values
+        contrast_percentage, tactile_luminance, surrounding_luminance = calculate_luminance_contrast(
+            original_img,
+            mask_img
+        )
+
+        dsapt_compliance_score, dsapt_compatibility_label, notes = get_dsapt_compatibility(
+            result=result,
+            contrast_percentage=contrast_percentage
+        )
+
+        print(f"Tactile area luminance: {tactile_luminance:.2f}")
+        print(f"Surrounding area luminance: {surrounding_luminance:.2f}")
+        print(f"Estimated luminance contrast: {contrast_percentage:.2f}%")
+        print(f"DSAPT compatibility score: {dsapt_compliance_score}%")
+        print(f"DSAPT compatibility label: {dsapt_compatibility_label}")
+
+        # Generate PDF Report
+        report_path = pdf_report(
+            input_image=original_img,
+            processed_image=overlay_img,
+            accessibility_feature=accessibility_feature,
+            dsapt_compliance_score=dsapt_compliance_score,
+            notes=notes,
+            output_path=OUTPUT_PDF_PATH,
+            template_path=TEMPLATE_PATH
+        )
+
+        print(f"PDF report generated successfully: {report_path}")
+
+        # Convert overlay image to bytes
+        overlay_pil = Image.fromarray(overlay_img)
+
+        image_buffer = io.BytesIO()
+        overlay_pil.save(image_buffer, format="PNG")
+
+        output_image_bytes = image_buffer.getvalue()
+
+        # Convert PDF to bytes
+        with open(report_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+
+        # Return results
+        return {
+            "has_tactile_flooring": result == "Yes",
+            "compatibility_percentage": dsapt_compliance_score,
+            "compatibility_label": dsapt_compatibility_label,
+            "contrast_percentage": contrast_percentage,
+            "notes": notes,
+            "output_image_data": output_image_bytes,
+            "report_pdf": pdf_bytes,
+        }
+
+    finally:
+
+        # Delete temporary uploaded file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 if __name__ == "__main__":
     main()
