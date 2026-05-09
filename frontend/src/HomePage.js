@@ -85,9 +85,77 @@ export default function HomePage() {
         {report && (
           <section style={styles.card}>
             <h2 style={styles.h2}>Results</h2>
-            <pre style={{ fontSize: 13 }}>{JSON.stringify(report, null, 2)}</pre>
-          </section>
+            
+            <div style={{ marginBottom: 12 }}>
+              <strong>Tactile Flooring:</strong>{" "}
+              {report.has_tactile_flooring
+              ? "Detected"
+              : "Not Detected"}
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <strong>DSAPT Compatibility Score:</strong>{" "}
+              {report.compatibility_percentage}%
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <strong>Compatibility Label:</strong>{" "}
+              {report.compatibility_label}
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <strong>Contrast Percentage:</strong>{" "}
+              {report.contrast_percentage?.toFixed(2)}%
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <strong>Assessment Notes:</strong>
+              <p style={{ marginTop: 8, lineHeight: 1.6 }}>
+                {report.notes}
+              </p>
+            </div>
+
+            {/* PROCESSED IMAGE */}
+            {report.output_image && (
+              <div style={{ marginTop: 20 }}>
+                <h3 style={{ marginBottom: 10 }}>
+                  Processed Image
+                </h3>
+
+                <img
+                  src={`data:image/png;base64,${report.output_image}`}
+                  alt="Processed Result"
+                  style={{
+                    width: "100%",
+                    borderRadius: 12,
+                    border: "1px solid #d1d5db",
+                  }}
+                />
+              </div>
+          )}
+
+          {/* PDF DOWNLOAD */}
+          {report.report_pdf && (
+            <a
+              href={`data:application/pdf;base64,${report.report_pdf}`}
+              download="DSAPT_Report.pdf"
+              style={{
+                display: "inline-block",
+                marginTop: 20,
+                padding: "12px 18px",
+                background: "#16a34a",
+                color: "#fff",
+                borderRadius: 10,
+                textDecoration: "none",
+                fontWeight: 600,
+              }}
+            >
+             Download PDF Report
+        </a>
         )}
+        </section>
+    )}
+        
 
         <section style={styles.card}>
           <h2 style={styles.h2}>About this project</h2>
