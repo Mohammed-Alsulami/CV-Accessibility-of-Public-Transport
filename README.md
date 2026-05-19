@@ -15,7 +15,7 @@ Features
 - AI-based accessibility feature detection
 - Automated report generation
 - Visual preview of uploaded image
-- REST API communication between frontend and backend
+- The backend uses a prototype API key for protected endpoints
 
 
 Purpose
