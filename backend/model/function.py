@@ -9,7 +9,7 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 import io
 import tempfile
-
+import argparse
 from .src import GRFBUNet
 
 
@@ -41,12 +41,17 @@ ACCESSIBILITY_FEATURE_X = 205.33
 ACCESSIBILITY_FEATURE_Y = 345
 
 
+
+
 # Load Model
 def load_model(model_path, device):
     classes = 1
     model = GRFBUNet(in_channels=3, num_classes=classes + 1, base_c=32)
 
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    torch.serialization.add_safe_globals([argparse.Namespace])
+
+
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
     model.load_state_dict(checkpoint["model"])
     model.to(device)
     model.eval()

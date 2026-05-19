@@ -1,7 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from database import (
     init_db,
     save_user_input_image,
@@ -12,8 +12,57 @@ from database import (
 import base64
 import traceback
 import numpy as np
+import io
+from PIL import Image
 
 from model.function import analyze_uploaded_file
+
+# API KEY AUTHENTICATION
+# This key is used to protect the backend endpoints.
+# Any request to /analyze or /analyses must include this key in the request header.
+# Header name: x-api-key
+# For prototype testing, the default key is "dev-secret-key".
+# In production, this key should be stored as an environment variable, not hardcoded.
+API_KEY = os.getenv("API_KEY", "dev-secret-key")
+
+
+# FILE UPLOAD VALIDATION
+# The backend must not trust the uploaded filename or extension only.
+# This validation checks the file size and confirms that image files are real images
+# before saving them or passing them to the AI model.
+# This helps prevent memory exhaustion, fake file uploads, and unsafe parsing.
+MAX_IMAGE_SIZE = 20 * 1024 * 1024
+MAX_VIDEO_SIZE = 100 * 1024 * 1024
+
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov"}
+
+
+def validate_image_bytes(file_bytes):
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+        image.verify()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image file.")
+
+
+def validate_uploaded_file(file_bytes, filename):
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext in ALLOWED_IMAGE_EXTENSIONS:
+        if len(file_bytes) > MAX_IMAGE_SIZE:
+            raise HTTPException(status_code=413, detail="Image file is too large.")
+
+        validate_image_bytes(file_bytes)
+        return
+
+    if ext in ALLOWED_VIDEO_EXTENSIONS:
+        if len(file_bytes) > MAX_VIDEO_SIZE:
+            raise HTTPException(status_code=413, detail="Video file is too large.")
+
+        return
+
+    raise HTTPException(status_code=400, detail="Unsupported file type.")
 
 
 def safe(v):
@@ -22,6 +71,12 @@ def safe(v):
     if isinstance(v, (np.int32, np.int64)):
         return int(v)
     return v
+
+def verify_api_key(x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return x_api_key
+
 
 
 app = FastAPI()
@@ -42,11 +97,16 @@ def home():
 
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(
+    file: UploadFile = File(...),
+    api_key: str = Depends(verify_api_key)):
+    
 
     print("✅ FILE RECEIVED:", file.filename)
 
     image_bytes = await file.read()
+
+    validate_uploaded_file(image_bytes, file.filename)
 
     input_id = save_user_input_image(file.filename, image_bytes)
 
@@ -89,5 +149,6 @@ async def analyze(file: UploadFile = File(...)):
 
 
 @app.get("/analyses")
-def list_analyses():
+def list_analyses(api_key: str = Depends(verify_api_key)):
     return get_all_outputs()
+

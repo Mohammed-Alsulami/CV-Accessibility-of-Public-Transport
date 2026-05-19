@@ -8,6 +8,7 @@ export default function HomePage() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showDsaptInfo, setShowDsaptInfo] = useState(false);
 
   const handleUploadClick = () => fileInputRef.current.click();
 
@@ -35,7 +36,11 @@ export default function HomePage() {
       try {
         res = await fetch("http://127.0.0.1:8000/analyze", {
           method: "POST",
+          headers: {
+          "x-api-key": "dev-secret-key",
+          },
           body: formData,
+
         });
       } catch {
         throw new Error(
@@ -61,7 +66,7 @@ export default function HomePage() {
       <header style={styles.header}>
         <div style={styles.headerInner}>
           <img src="/white-logo.png" style={styles.logo} alt="logo" />
-          <div style={styles.title}>Accessibility Audit AI</div>
+          <div style={styles.title}>Accessibility Audit Tool</div>
         </div>
       </header>
 
@@ -107,6 +112,39 @@ export default function HomePage() {
           <section style={styles.card}>
             <h2 style={styles.h2}>Results</h2>
 
+{showDsaptInfo && (
+  <div style={styles.popupOverlay}>
+    <div style={styles.dsaptPopup}>
+      <button
+        type="button"
+        onClick={() => setShowDsaptInfo(false)}
+        style={styles.popupClose}
+      >
+        ×
+      </button>
+
+      <h3 style={styles.popupTitle}>DSAPT Contrast Requirements</h3>
+
+      <p style={styles.popupText}>
+        This tool checks the luminance contrast between the detected tactile
+        flooring and the surrounding floor surface.
+      </p>
+
+      <div style={styles.requirementList}>
+        <div><strong>Below 30%</strong>: Not compatible</div>
+        <div><strong>30% to 44.99%</strong>: Minimum compatibility</div>
+        <div><strong>45% to 59.99%</strong>: Moderate compatibility</div>
+        <div><strong>60% or above</strong>: High compatibility</div>
+      </div>
+
+      <p style={styles.popupText}>
+        The DSAPT score shown in the results is calculated based on these
+        contrast levels.
+      </p>
+    </div>
+  </div>
+)}
+
             {/* SCORES */}
             <div style={styles.scoreGrid}>
               <div style={styles.scoreBox}>
@@ -122,10 +160,21 @@ export default function HomePage() {
               </div>
 
               <div style={styles.scoreBox}>
-                <div style={styles.scoreLabel}>DSAPT Score</div>
-                <div style={styles.scoreValue}>{report.compatibility_percentage}%</div>
+                <div style={styles.scoreLabelWithIcon}>
+                  <span>DSAPT Score</span>
+                  <button
+                   type="button"
+                   onClick={() => setShowDsaptInfo(true)}
+                   style={styles.infoIcon}
+                   title="View DSAPT contrast requirements"
+                  >
+                   👁
+                  </button>
               </div>
 
+              <div style={styles.scoreValue}>{report.compatibility_percentage}%</div>
+            </div>
+            
               <div style={styles.scoreBox}>
                 <div style={styles.scoreLabel}>Compatibility</div>
                 <div style={styles.scoreValue}>{report.compatibility_label}</div>
@@ -454,4 +503,83 @@ const styles = {
     lineHeight: 1.7,
     color: "#d1d5db",
   },
+
+
+   scoreLabelWithIcon: {
+  fontSize: 12,
+  color: "#6b7280",
+  marginBottom: 6,
+  fontWeight: 500,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+},
+
+infoIcon: {
+  border: "none",
+  background: "transparent",
+  cursor: "pointer",
+  fontSize: 15,
+  padding: 0,
+  lineHeight: 1,
+},
+
+popupOverlay: {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  width: "100%",
+  height: "100%",
+  background: "rgba(0, 0, 0, 0.35)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 1000,
+},
+
+dsaptPopup: {
+  background: "#ffffff",
+  width: 430,
+  maxWidth: "90%",
+  borderRadius: 16,
+  padding: 24,
+  boxShadow: "0 10px 30px rgba(0, 0, 0, 0.18)",
+  position: "relative",
+},
+
+popupClose: {
+  position: "absolute",
+  top: 10,
+  right: 14,
+  border: "none",
+  background: "transparent",
+  fontSize: 26,
+  cursor: "pointer",
+  color: "#374151",
+},
+
+popupTitle: {
+  fontSize: 17,
+  fontWeight: 700,
+  marginBottom: 12,
+  color: "#111827",
+},
+
+popupText: {
+  fontSize: 14,
+  color: "#4b5563",
+  lineHeight: 1.6,
+},
+
+requirementList: {
+  background: "#f8fafc",
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  padding: 14,
+  fontSize: 14,
+  color: "#374151",
+  lineHeight: 1.8,
+  margin: "12px 0",
+},
 };
