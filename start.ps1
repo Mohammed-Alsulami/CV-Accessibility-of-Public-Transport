@@ -162,29 +162,49 @@ Write-OK "Virtual environment ready."
 
 # ── Backend Python dependencies ────────────────────────────────────────────────
 
-Write-Step "Installing backend Python dependencies..."
-& $VenvPython -m pip install --upgrade pip --quiet
-& $VenvPython -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) {
-    Write-Err "pip install failed. Check requirements.txt and the error above."
-    Read-Host "Press Enter to exit"
-    exit 1
+$pipStamp = ".venv\.deps-installed"
+if ((Test-Path $pipStamp) -and (Get-Item "requirements.txt").LastWriteTime -le (Get-Item $pipStamp).LastWriteTime) {
+    Write-Step "Backend dependencies up to date, skipping pip install."
+} else {
+    Write-Step "Installing backend Python dependencies..."
+    & $VenvPython -m pip install --upgrade pip --quiet
+    & $VenvPython -m pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "pip install failed. Check requirements.txt and the error above."
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+    New-Item -Path $pipStamp -ItemType File -Force | Out-Null
+    Write-OK "Backend dependencies installed."
 }
-Write-OK "Backend dependencies installed."
 
 # ── Frontend Node.js dependencies ─────────────────────────────────────────────
 
-Write-Step "Installing frontend Node.js dependencies..."
-Push-Location "frontend"
-& $npmCmd install
-if ($LASTEXITCODE -ne 0) {
-    Pop-Location
-    Write-Err "npm install failed. Check frontend/package.json and the error above."
-    Read-Host "Press Enter to exit"
-    exit 1
+$npmStamp = "frontend\node_modules\.install-stamp"
+$needsNpm = $true
+if (Test-Path $npmStamp) {
+    $stampTime = (Get-Item $npmStamp).LastWriteTime
+    $pkgNewer  = (Get-Item "frontend\package.json").LastWriteTime -gt $stampTime
+    $lockNewer = (Test-Path "frontend\package-lock.json") -and (Get-Item "frontend\package-lock.json").LastWriteTime -gt $stampTime
+    if (!$pkgNewer -and !$lockNewer) { $needsNpm = $false }
 }
-Pop-Location
-Write-OK "Frontend dependencies installed."
+if ($needsNpm) {
+    Write-Step "Installing frontend Node.js dependencies..."
+    Push-Location "frontend"
+    & $npmCmd ci 2>$null
+    if ($LASTEXITCODE -ne 0) { & $npmCmd install }
+    if ($LASTEXITCODE -ne 0) {
+        Pop-Location
+        Write-Err "npm install failed. Check frontend/package.json and the error above."
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+    New-Item -Path "node_modules\.install-stamp" -ItemType File -Force | Out-Null
+    Pop-Location
+    Write-OK "Frontend dependencies installed."
+} else {
+    Write-Step "Frontend dependencies up to date, skipping npm install."
+}
 
 # ── Clear occupied ports ───────────────────────────────────────────────────────
 

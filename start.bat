@@ -134,34 +134,53 @@ echo     Virtual environment ready.
 :: ── Backend Python dependencies ──────────────────────────────────────────────
 
 echo.
-echo ^>^>^> Installing backend Python dependencies...
-
-.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-if errorlevel 1 (
-    echo.
-    echo ERROR: pip install failed. Check requirements.txt and the error above.
-    pause
-    exit /b 1
+set "NEEDS_PIP=1"
+if exist ".venv\.deps-installed" (
+    powershell -NoProfile -Command "if ((Get-Item 'requirements.txt').LastWriteTime -le (Get-Item '.venv\.deps-installed').LastWriteTime) { exit 0 } else { exit 1 }" >nul 2>&1
+    if not errorlevel 1 set "NEEDS_PIP=0"
 )
-echo     Backend dependencies installed.
+if "%NEEDS_PIP%"=="1" (
+    echo ^>^>^> Installing backend Python dependencies...
+    .venv\Scripts\python.exe -m pip install --upgrade pip --quiet
+    .venv\Scripts\python.exe -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo.
+        echo ERROR: pip install failed. Check requirements.txt and the error above.
+        pause
+        exit /b 1
+    )
+    copy /y nul ".venv\.deps-installed" >nul
+    echo     Backend dependencies installed.
+) else (
+    echo ^>^>^> Backend dependencies up to date, skipping pip install.
+)
 
 :: ── Frontend Node.js dependencies ────────────────────────────────────────────
 
 echo.
-echo ^>^>^> Installing frontend Node.js dependencies...
-
-pushd frontend
-npm install
-if errorlevel 1 (
-    popd
-    echo.
-    echo ERROR: npm install failed. Check frontend/package.json and the error above.
-    pause
-    exit /b 1
+set "NEEDS_NPM=1"
+if exist "frontend\node_modules\.install-stamp" (
+    powershell -NoProfile -Command "if ((Get-Item 'frontend/package.json').LastWriteTime -le (Get-Item 'frontend/node_modules/.install-stamp').LastWriteTime -and (!(Test-Path 'frontend/package-lock.json') -or (Get-Item 'frontend/package-lock.json').LastWriteTime -le (Get-Item 'frontend/node_modules/.install-stamp').LastWriteTime)) { exit 0 } else { exit 1 }" >nul 2>&1
+    if not errorlevel 1 set "NEEDS_NPM=0"
 )
-popd
-echo     Frontend dependencies installed.
+if "%NEEDS_NPM%"=="1" (
+    echo ^>^>^> Installing frontend Node.js dependencies...
+    pushd frontend
+    npm ci 2>nul
+    if errorlevel 1 npm install
+    if errorlevel 1 (
+        popd
+        echo.
+        echo ERROR: npm install failed. Check frontend/package.json and the error above.
+        pause
+        exit /b 1
+    )
+    copy /y nul "node_modules\.install-stamp" >nul
+    popd
+    echo     Frontend dependencies installed.
+) else (
+    echo ^>^>^> Frontend dependencies up to date, skipping npm install.
+)
 
 :: ── Clear occupied ports ──────────────────────────────────────────────────────
 

@@ -13,14 +13,25 @@ echo "Activating virtual environment..."
 source .venv/bin/activate
 
 # ── Backend Python dependencies ────────────────────────────
-echo ""
-echo "Installing backend Python dependencies..."
-pip install -r requirements.txt
+if [ requirements.txt -nt .venv/.deps-installed ]; then
+    echo ""
+    echo "Installing backend Python dependencies..."
+    pip install -r requirements.txt && touch .venv/.deps-installed
+else
+    echo ""
+    echo "Backend dependencies up to date, skipping pip install."
+fi
 
 # ── Frontend Node.js dependencies ─────────────────────────
-echo ""
-echo "Installing frontend Node.js dependencies..."
-(cd frontend && npm install)
+if [ frontend/package.json -nt frontend/node_modules/.install-stamp ] || \
+   [ frontend/package-lock.json -nt frontend/node_modules/.install-stamp ] 2>/dev/null; then
+    echo ""
+    echo "Installing frontend Node.js dependencies..."
+    (cd frontend && npm ci 2>/dev/null || npm install) && touch frontend/node_modules/.install-stamp
+else
+    echo ""
+    echo "Frontend dependencies up to date, skipping npm install."
+fi
 
 # ── Clear ports if already occupied ───────────────────────
 lsof -ti :8000 | xargs kill -9 2>/dev/null || true
