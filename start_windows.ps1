@@ -1,7 +1,7 @@
 # Accessibility Audit Tool - Windows launcher
 # Installs ALL required tools (Python, Node.js) and dependencies, then starts both servers.
 #
-# Usage (double-click start_windows.bat  OR  run directly):
+# Usage — open PowerShell in the project folder and run:
 #   powershell -ExecutionPolicy Bypass -File .\start_windows.ps1
 
 $ErrorActionPreference = "Stop"
