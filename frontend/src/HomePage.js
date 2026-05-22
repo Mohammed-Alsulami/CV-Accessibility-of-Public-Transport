@@ -12,9 +12,26 @@ export default function HomePage() {
 
   const handleUploadClick = () => fileInputRef.current.click();
 
+  const ALLOWED_TYPES = ["image/jpeg", "image/png", "video/mp4", "video/quicktime"];
+  const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+  const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+
   const handleFileChange = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+
+    if (!ALLOWED_TYPES.includes(f.type)) {
+      setError("Unsupported file type. Please upload a JPG, PNG, MP4, or MOV file.");
+      return;
+    }
+
+    const isVideo = f.type.startsWith("video/");
+    const limit = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    const limitLabel = isVideo ? "100 MB" : "20 MB";
+    if (f.size > limit) {
+      setError(`File is too large. Maximum size for ${isVideo ? "video" : "image"} files is ${limitLabel}.`);
+      return;
+    }
 
     setFile(f);
     setPreview(URL.createObjectURL(f));
@@ -85,7 +102,7 @@ export default function HomePage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,video/*"
+              accept=".jpg,.jpeg,.png,.mp4,.mov"
               hidden
               onChange={handleFileChange}
             />

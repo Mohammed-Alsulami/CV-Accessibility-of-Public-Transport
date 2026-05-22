@@ -96,15 +96,28 @@ def home():
     return {"message": "Backend is running"}
 
 
+async def _read_with_limit(upload_file: UploadFile, max_bytes: int) -> bytes:
+    chunks = []
+    total = 0
+    while True:
+        chunk = await upload_file.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="File exceeds maximum allowed upload size.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/analyze")
 async def analyze(
     file: UploadFile = File(...),
     api_key: str = Depends(verify_api_key)):
-    
 
-    print("✅ FILE RECEIVED:", file.filename)
+    print("FILE RECEIVED:", file.filename)
 
-    image_bytes = await file.read()
+    image_bytes = await _read_with_limit(file, MAX_VIDEO_SIZE)
 
     validate_uploaded_file(image_bytes, file.filename)
 
