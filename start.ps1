@@ -2,7 +2,7 @@
 # Installs ALL required tools (Python, Node.js) and dependencies, then starts both servers.
 #
 # Usage — open PowerShell in the project folder and run:
-#   powershell -ExecutionPolicy Bypass -File .\start_windows.ps1
+#   powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 $ErrorActionPreference = "Stop"
 

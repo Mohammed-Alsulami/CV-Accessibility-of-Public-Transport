@@ -131,13 +131,19 @@ Open `http://localhost:3000` in your browser.
 
 ### Windows
 
-Open **PowerShell** in the project folder and run:
+**Option 1 — PowerShell** (recommended):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\start_windows.ps1
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
-The script auto-installs Python 3.12 and Node.js LTS via `winget` if they are not already present, then starts both servers and opens the browser automatically.
+**Option 2 — Command Prompt** (`cmd.exe`):
+
+```bat
+start.bat
+```
+
+Both scripts auto-install Python 3.12 and Node.js LTS via `winget` if they are not already present, then start both servers and open the browser automatically.
 
 ---
 
@@ -149,7 +155,8 @@ CV-Accessibility-of-Public-Transport/
 ├── README.md                        ← This file
 ├── requirements.txt                 ← Python dependencies
 ├── start.sh                         ← macOS/Linux launcher
-├── start_windows.ps1                ← Windows launcher
+├── start.ps1                        ← Windows launcher (PowerShell)
+├── start.bat                        ← Windows launcher (Command Prompt)
 ├── .gitignore
 │
 ├── backend/
@@ -547,7 +554,7 @@ PyTorch loads and JIT-compiles on the first inference call. Subsequent calls are
 
 **Port already in use**
 
-The launcher scripts kill processes on ports 8000 and 3000 before starting. If you are on Windows without using the launcher script, run:
+The launcher scripts (`start.ps1` / `start.bat`) kill processes on ports 8000 and 3000 before starting. If you are on Windows without using a launcher script, run:
 
 ```powershell
 # Kill whatever is on port 8000
