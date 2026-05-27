@@ -19,7 +19,7 @@ echo ============================================
 cd /d "%~dp0"
 echo   Project root: %~dp0
 
-:: ── Sanity-check project structure ──────────────────────────────────────────
+:: -- Sanity-check project structure ------------------------------------------
 
 if not exist "requirements.txt" (
     echo.
@@ -43,7 +43,11 @@ if not exist "frontend\package.json" (
     exit /b 1
 )
 
-:: ── Locate Python 3.11 ───────────────────────────────────────────────────────
+:: -- Locate Python 3.11 -------------------------------------------------------
+:: NOTE: the version checks use `assert` (no parentheses) and the control flow
+:: uses goto / && / || instead of if(...) blocks, because cmd mis-counts the
+:: ")" inside a quoted command and closes the block early ("unexpected at this
+:: time"). Keep parens-containing commands OUT of ( ) blocks.
 
 echo.
 echo ^>^>^> Checking Python 3.11...
@@ -51,77 +55,57 @@ echo ^>^>^> Checking Python 3.11...
 set "PY311_CMD="
 set "PY311_ARG="
 
-:: Try Windows Python Launcher (py -3.11) first
-where py >nul 2>&1
-if not errorlevel 1 (
-    py -3.11 -c "import sys; exit(0 if sys.version_info.minor==11 else 1)" >nul 2>&1
-    if not errorlevel 1 (
-        set "PY311_CMD=py"
-        set "PY311_ARG=-3.11"
-    )
-)
+:: Try the Windows Python Launcher (py -3.11) first.
+where py >nul 2>&1 || goto :py_try_python
+py -3.11 -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 || goto :py_try_python
+set "PY311_CMD=py"
+set "PY311_ARG=-3.11"
+goto :py_have
 
-:: Fall back to default python command
-if not defined PY311_CMD (
-    where python >nul 2>&1
-    if not errorlevel 1 (
-        python -c "import sys; exit(0 if sys.version_info.minor==11 else 1)" >nul 2>&1
-        if not errorlevel 1 set "PY311_CMD=python"
-    )
-)
+:py_try_python
+:: Fall back to the default python command.
+where python >nul 2>&1 || goto :py_install
+python -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 || goto :py_install
+set "PY311_CMD=python"
+goto :py_have
 
-:: If still not found, attempt winget install
-if not defined PY311_CMD (
-    echo   Python 3.11 not found. Attempting automatic installation...
-    where winget >nul 2>&1
-    if errorlevel 1 (
-        echo.
-        echo ERROR: winget (Windows Package Manager) was not found.
-        echo   winget ships with Windows 10 1809+ / Windows 11.
-        echo   Install Python 3.11 manually from https://www.python.org/downloads/
-        echo   Tick "Add Python to PATH" during setup, then re-run this script.
-        pause
-        exit /b 1
-    )
-    winget install --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
-    :: Refresh PATH for this session
-    for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYSPATH=%%B"
-    for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USRPATH=%%B"
-    set "PATH=!SYSPATH!;!USRPATH!"
-    :: Re-check after install
-    where py >nul 2>&1
-    if not errorlevel 1 (
-        py -3.11 -c "import sys; exit(0 if sys.version_info.minor==11 else 1)" >nul 2>&1
-        if not errorlevel 1 (
-            set "PY311_CMD=py"
-            set "PY311_ARG=-3.11"
-        )
-    )
-    if not defined PY311_CMD (
-        where python >nul 2>&1
-        if not errorlevel 1 (
-            python -c "import sys; exit(0 if sys.version_info.minor==11 else 1)" >nul 2>&1
-            if not errorlevel 1 set "PY311_CMD=python"
-        )
-    )
-)
+:py_install
+echo   Python 3.11 not found. Attempting automatic installation...
+where winget >nul 2>&1 || goto :py_no_winget
+winget install --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
+:: Refresh PATH for this session.
+for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYSPATH=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USRPATH=%%B"
+set "PATH=!SYSPATH!;!USRPATH!"
+:: Re-check after install.
+where py >nul 2>&1 && py -3.11 -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 && set "PY311_CMD=py" && set "PY311_ARG=-3.11"
+if defined PY311_CMD goto :py_have
+where python >nul 2>&1 && python -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 && set "PY311_CMD=python"
+if defined PY311_CMD goto :py_have
+echo.
+echo ERROR: Python 3.11 not found after installation attempt.
+echo   Install Python 3.11 from https://www.python.org/downloads/
+echo   Tick "Add Python to PATH" during setup, then re-run this script.
+pause
+exit /b 1
 
-if not defined PY311_CMD (
-    echo.
-    echo ERROR: Python 3.11 not found after installation attempt.
-    echo   Install Python 3.11 from https://www.python.org/downloads/
-    echo   Tick "Add Python to PATH" during setup, then re-run this script.
-    pause
-    exit /b 1
-)
+:py_no_winget
+echo.
+echo ERROR: winget (Windows Package Manager) was not found.
+echo   winget ships with Windows 10 1809+ / Windows 11.
+echo   Install Python 3.11 manually from https://www.python.org/downloads/
+echo   Tick "Add Python to PATH" during setup, then re-run this script.
+pause
+exit /b 1
 
+:py_have
 if "!PY311_ARG!"=="" (
     for /f "tokens=*" %%V in ('python --version 2^>^&1') do echo   Found: %%V
 ) else (
     for /f "tokens=*" %%V in ('py -3.11 --version 2^>^&1') do echo   Found: %%V
 )
 
-:: ── Check / install Node.js / npm ───────────────────────────────────────────
+:: -- Check / install Node.js / npm -------------------------------------------
 
 echo.
 echo ^>^>^> Checking Node.js / npm...
@@ -154,7 +138,7 @@ if errorlevel 1 (
 
 for /f "tokens=*" %%V in ('npm --version 2^>^&1') do echo   Found: npm %%V
 
-:: ── Remove stale virtual environments ─────────────────────────────────────────
+:: -- Remove stale virtual environments ----------------------------------------
 
 echo.
 echo ^>^>^> Checking virtual environment...
@@ -166,17 +150,19 @@ for %%D in (venv env .env venv3 .venv3 .venv_old) do (
     )
 )
 
-:: ── Virtual environment health check and creation ────────────────────────────
+:: -- Virtual environment health check -----------------------------------------
+:: Same parens rule as above: the importlib probe contains "(" / ")", so it is
+:: run at top level (between labels), never inside an if(...) block.
 
 set "VENV_HEALTHY=0"
-if exist ".venv\Scripts\python.exe" (
-    .venv\Scripts\python.exe -c "import sys; exit(0 if sys.version_info.minor==11 else 1)" >nul 2>&1
-    if not errorlevel 1 (
-        .venv\Scripts\python.exe -c "import importlib.util,sys; missing=[p for p in ['fastapi','uvicorn','cv2','torch','reportlab'] if importlib.util.find_spec(p) is None]; sys.exit(1) if missing else None" >nul 2>&1
-        if not errorlevel 1 set "VENV_HEALTHY=1"
-    )
-    if "!VENV_HEALTHY!"=="0" echo   ! Existing venv is unhealthy.
-)
+if not exist ".venv\Scripts\python.exe" goto :venv_checked
+.venv\Scripts\python.exe -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 || goto :venv_unhealthy
+.venv\Scripts\python.exe -c "import importlib.util,sys;missing=[p for p in ['fastapi','uvicorn','cv2','torch','reportlab'] if importlib.util.find_spec(p) is None];sys.exit(1 if missing else 0)" >nul 2>&1 || goto :venv_unhealthy
+set "VENV_HEALTHY=1"
+goto :venv_checked
+:venv_unhealthy
+echo   ! Existing venv is unhealthy.
+:venv_checked
 
 if "!VENV_HEALTHY!"=="0" (
     if exist ".venv\" (
@@ -200,14 +186,16 @@ if "!VENV_HEALTHY!"=="0" (
 
 echo   Virtual environment ready.
 
-:: ── Backend Python dependencies ──────────────────────────────────────────────
+:: -- Backend Python dependencies ----------------------------------------------
+:: The PowerShell freshness probe contains "(" / ")", so it runs at top level
+:: with && setting the flag, never inside an if(...) block.
 
 echo.
 set "NEEDS_PIP=1"
-if exist ".venv\.deps-installed" (
-    powershell -NoProfile -Command "if ((Get-Item 'requirements.txt').LastWriteTime -le (Get-Item '.venv\.deps-installed').LastWriteTime) { exit 0 } else { exit 1 }" >nul 2>&1
-    if not errorlevel 1 set "NEEDS_PIP=0"
-)
+if not exist ".venv\.deps-installed" goto :pip_decided
+powershell -NoProfile -Command "if ((Get-Item 'requirements.txt').LastWriteTime -le (Get-Item '.venv\.deps-installed').LastWriteTime) { exit 0 } else { exit 1 }" >nul 2>&1 && set "NEEDS_PIP=0"
+:pip_decided
+
 if "!NEEDS_PIP!"=="1" (
     echo ^>^>^> Installing backend Python dependencies...
     echo (PyTorch is large - this may take several minutes on first install)
@@ -224,14 +212,14 @@ if "!NEEDS_PIP!"=="1" (
     echo ^>^>^> Backend dependencies up to date, skipping pip install.
 )
 
-:: ── Frontend Node.js dependencies ────────────────────────────────────────────
+:: -- Frontend Node.js dependencies --------------------------------------------
 
 echo.
 set "NEEDS_NPM=1"
-if exist "frontend\node_modules\.install-stamp" (
-    powershell -NoProfile -Command "if ((Get-Item 'frontend/package.json').LastWriteTime -le (Get-Item 'frontend/node_modules/.install-stamp').LastWriteTime -and (!(Test-Path 'frontend/package-lock.json') -or (Get-Item 'frontend/package-lock.json').LastWriteTime -le (Get-Item 'frontend/node_modules/.install-stamp').LastWriteTime)) { exit 0 } else { exit 1 }" >nul 2>&1
-    if not errorlevel 1 set "NEEDS_NPM=0"
-)
+if not exist "frontend\node_modules\.install-stamp" goto :npm_decided
+powershell -NoProfile -Command "if ((Get-Item 'frontend/package.json').LastWriteTime -le (Get-Item 'frontend/node_modules/.install-stamp').LastWriteTime -and (!(Test-Path 'frontend/package-lock.json') -or (Get-Item 'frontend/package-lock.json').LastWriteTime -le (Get-Item 'frontend/node_modules/.install-stamp').LastWriteTime)) { exit 0 } else { exit 1 }" >nul 2>&1 && set "NEEDS_NPM=0"
+:npm_decided
+
 if "!NEEDS_NPM!"=="1" (
     echo ^>^>^> Installing frontend Node.js dependencies...
     pushd frontend
@@ -251,7 +239,7 @@ if "!NEEDS_NPM!"=="1" (
     echo ^>^>^> Frontend dependencies up to date, skipping npm install.
 )
 
-:: ── Clear occupied ports ──────────────────────────────────────────────────────
+:: -- Clear occupied ports -----------------------------------------------------
 
 echo.
 echo ^>^>^> Checking for leftover processes...
@@ -264,7 +252,7 @@ for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr ":3000 " ^| findstr "L
 )
 echo   Ports cleared.
 
-:: ── Start backend ─────────────────────────────────────────────────────────────
+:: -- Start backend ------------------------------------------------------------
 
 echo.
 echo ^>^>^> Starting backend  -^>  http://localhost:8000
@@ -290,7 +278,7 @@ if errorlevel 1 (
 )
 echo   Backend is running.
 
-:: ── Start frontend ────────────────────────────────────────────────────────────
+:: -- Start frontend -----------------------------------------------------------
 
 echo.
 echo ^>^>^> Starting frontend -^>  http://localhost:3000
@@ -298,8 +286,10 @@ echo ^>^>^> Starting frontend -^>  http://localhost:3000
 :: react-scripts 5 (CRA/webpack) needs OpenSSL's legacy provider on Node 17+, else
 :: webpack hashing throws ERR_OSSL_EVP_UNSUPPORTED. NODE_OPTIONS is set here in the
 :: parent environment so the frontend window inherits it; no fixed heap cap.
+:: Node major is read via `node -v` (parens-free) to stay clear of the cmd bug.
 set "NODE_MAJOR=0"
-for /f "delims=" %%V in ('node -p "process.versions.node.split('.')[0]" 2^>nul') do set "NODE_MAJOR=%%V"
+for /f "tokens=1 delims=." %%V in ('node -v 2^>nul') do set "NODE_MAJOR=%%V"
+set "NODE_MAJOR=!NODE_MAJOR:v=!"
 set "NODE_OPTIONS="
 if !NODE_MAJOR! geq 17 set "NODE_OPTIONS=--openssl-legacy-provider"
 
@@ -323,13 +313,13 @@ if errorlevel 1 (
 )
 echo   Frontend is running.
 
-:: ── Open browser ──────────────────────────────────────────────────────────────
+:: -- Open browser -------------------------------------------------------------
 
 echo.
 echo ^>^>^> Opening browser...
 start "" "http://localhost:3000"
 
-:: ── Done ──────────────────────────────────────────────────────────────────────
+:: -- Done ---------------------------------------------------------------------
 
 echo.
 echo ============================================
