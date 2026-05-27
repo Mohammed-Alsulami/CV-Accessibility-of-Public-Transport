@@ -295,7 +295,15 @@ echo   Backend is running.
 echo.
 echo ^>^>^> Starting frontend -^>  http://localhost:3000
 
-start "Frontend - Accessibility Audit Tool" cmd /k "cd /d "%~dp0frontend" && set BROWSER=none && set GENERATE_SOURCEMAP=false && set NODE_OPTIONS=--max-old-space-size=512 && npm start"
+:: react-scripts 5 (CRA/webpack) needs OpenSSL's legacy provider on Node 17+, else
+:: webpack hashing throws ERR_OSSL_EVP_UNSUPPORTED. NODE_OPTIONS is set here in the
+:: parent environment so the frontend window inherits it; no fixed heap cap.
+set "NODE_MAJOR=0"
+for /f "delims=" %%V in ('node -p "process.versions.node.split('.')[0]" 2^>nul') do set "NODE_MAJOR=%%V"
+set "NODE_OPTIONS="
+if !NODE_MAJOR! geq 17 set "NODE_OPTIONS=--openssl-legacy-provider"
+
+start "Frontend - Accessibility Audit Tool" cmd /k "cd /d "%~dp0frontend" && set BROWSER=none && set GENERATE_SOURCEMAP=false && npm start"
 
 echo   Waiting for frontend...
 set /a TRIES=0

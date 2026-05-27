@@ -140,12 +140,17 @@ BACKEND_PID=$!
 echo "Starting frontend →  http://localhost:3000"
 
 FRONTEND_LOG="$(pwd)/$VENV_DIR/frontend_run.log"
-# react-scripts 5 is incompatible with Node 22+ — use Node 20 if available
-NODE20_BIN=$(ls -d "$HOME/.nvm/versions/node/v20."*/bin 2>/dev/null | tail -1)
-FRONTEND_PATH="${NODE20_BIN:+$NODE20_BIN:}$PATH"
-# GENERATE_SOURCEMAP=false skips source map generation, cutting webpack startup time significantly.
-# NODE_OPTIONS caps the webpack Node.js heap at 512 MB to limit swap pressure on RAM-constrained machines.
-(cd frontend && env PATH="$FRONTEND_PATH" BROWSER=none GENERATE_SOURCEMAP=false NODE_OPTIONS='--max-old-space-size=512' npm start 2>&1 | tee "$FRONTEND_LOG") &
+# react-scripts 5 (CRA/webpack) needs OpenSSL's legacy provider on Node 17+,
+# otherwise webpack hashing throws ERR_OSSL_EVP_UNSUPPORTED. Add the flag only when
+# the active Node is new enough to accept it (older Node would reject the flag).
+NODE_MAJOR=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)
+FRONTEND_NODE_OPTIONS=""
+if [ "$NODE_MAJOR" -ge 17 ]; then
+    FRONTEND_NODE_OPTIONS="--openssl-legacy-provider"
+fi
+# GENERATE_SOURCEMAP=false skips source-map generation (big memory + startup win in dev).
+# No --max-old-space-size cap: modern Node sizes its heap from the machine's RAM.
+(cd frontend && env BROWSER=none GENERATE_SOURCEMAP=false NODE_OPTIONS="$FRONTEND_NODE_OPTIONS" npm start 2>&1 | tee "$FRONTEND_LOG") &
 FRONTEND_PID=$!
 
 echo -n "  Waiting for backend and frontend"

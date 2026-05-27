@@ -86,7 +86,7 @@ function Test-VenvOk {
 
 function Remove-StaleVenvs {
     foreach ($dir in @("venv", "env", ".env", "venv3", ".venv3", ".venv_old")) {
-        if (Test-Path $dir) {
+        if (Test-Path $dir -PathType Container) {
             Write-Warn "Removing stale environment: $dir"
             Remove-Item -Recurse -Force $dir
         }
@@ -280,7 +280,15 @@ Write-Info "Backend ready!"
 Write-Step "Starting frontend ->  http://localhost:3000"
 
 $FrontendPath    = Join-Path $Root "frontend"
-$FrontendCommand = "cd /d `"$FrontendPath`" && set BROWSER=none && set GENERATE_SOURCEMAP=false && set NODE_OPTIONS=--max-old-space-size=512 && $npmCmd start"
+
+# react-scripts 5 (CRA/webpack) needs OpenSSL's legacy provider on Node 17+, else
+# webpack hashing throws ERR_OSSL_EVP_UNSUPPORTED. Only add it when Node accepts it.
+$nodeMajor = 0
+try { $nodeMajor = [int](& node -p "process.versions.node.split('.')[0]") } catch {}
+$frontendNodeOpts = if ($nodeMajor -ge 17) { "--openssl-legacy-provider" } else { "" }
+
+# No --max-old-space-size cap: modern Node sizes its heap from the machine's RAM.
+$FrontendCommand = "cd /d `"$FrontendPath`" && set BROWSER=none && set GENERATE_SOURCEMAP=false && set `"NODE_OPTIONS=$frontendNodeOpts`" && $npmCmd start"
 
 Start-Process cmd.exe -ArgumentList "/k", $FrontendCommand -WindowStyle Normal
 
