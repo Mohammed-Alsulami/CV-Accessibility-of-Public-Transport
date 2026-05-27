@@ -1,31 +1,40 @@
-# Accessibility Audit Tool - Windows launcher
-# Installs ALL required tools (Python, Node.js) and dependencies, then starts both servers.
+# Accessibility Audit Tool - Windows PowerShell launcher
+# Starts the backend (FastAPI) and frontend (React) servers.
+# Matches the behavior of start.sh on Windows.
 #
 # Usage — open PowerShell in the project folder and run:
 #   powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 $ErrorActionPreference = "Stop"
+$REQUIRED_PYTHON_MINOR = 11
+$VENV_DIR = ".venv"
 
 # ── Helper functions ───────────────────────────────────────────────────────────
 
-function Write-Step($msg) { Write-Host "" ; Write-Host ">>> $msg" -ForegroundColor Cyan }
-function Write-OK($msg)   { Write-Host "    $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "    WARNING: $msg" -ForegroundColor Yellow }
-function Write-Err($msg)  { Write-Host "" ; Write-Host "ERROR: $msg" -ForegroundColor Red }
-
-function Refresh-Path {
-    # Reload PATH from the registry so newly installed tools are found immediately.
-    $machine = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-    $user    = [System.Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = "$machine;$user"
-}
+function Write-Info($msg) { Write-Host "  $msg" }
+function Write-Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
+function Write-Step($msg) { Write-Host ""; Write-Host ">>> $msg" -ForegroundColor Cyan }
+function Write-Err($msg)  { Write-Host ""; Write-Host "ERROR: $msg" -ForegroundColor Red }
 
 function Test-Command($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
+function Refresh-Path {
+    $machine = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $user    = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machine;$user"
+}
+
 function Install-WithWinget($packageId, $toolName) {
-    Write-Step "Installing $toolName via winget..."
+    if (!(Test-Command "winget")) {
+        Write-Err "winget (Windows Package Manager) was not found."
+        Write-Host "  winget ships with Windows 10 1809+ / Windows 11."
+        Write-Host "  Install $toolName manually, ensure it is on PATH, then re-run this script."
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+    Write-Info "Installing $toolName via winget..."
     winget install --id $packageId --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
         # -1978335189 = APPINSTALLER_ERROR_ALREADY_INSTALLED (treat as success)
@@ -37,21 +46,51 @@ function Install-WithWinget($packageId, $toolName) {
     Refresh-Path
 }
 
-function Ensure-Winget {
-    if (Test-Command "winget") { return }
+function Find-Python311 {
+    # Windows Python Launcher (py) can select specific installed versions
+    if (Test-Command "py") {
+        $minor = py -3.11 -c "import sys; print(sys.version_info.minor)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and "$minor".Trim() -eq "$REQUIRED_PYTHON_MINOR") {
+            $exePath = py -3.11 -c "import sys; print(sys.executable)" 2>$null
+            if ($exePath) { return $exePath.Trim() }
+        }
+    }
+    foreach ($candidate in @("python3.11", "python3", "python")) {
+        if (!(Test-Command $candidate)) { continue }
+        $minor = & $candidate -c "import sys; print(sys.version_info.minor)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and "$minor".Trim() -eq "$REQUIRED_PYTHON_MINOR") {
+            return (Get-Command $candidate).Source
+        }
+    }
+    return $null
+}
 
-    Write-Err "winget (Windows Package Manager) was not found."
-    Write-Host ""
-    Write-Host "  winget ships with Windows 10 1809+ / Windows 11."
-    Write-Host "  If your machine is older, install it from:"
-    Write-Host "  https://aka.ms/getwinget"
-    Write-Host ""
-    Write-Host "  Alternatively, install Python and Node.js manually:"
-    Write-Host "    Python:  https://www.python.org/downloads/"
-    Write-Host "    Node.js: https://nodejs.org/"
-    Write-Host "  Then re-run this script."
-    Read-Host "Press Enter to exit"
-    exit 1
+function Test-VenvOk {
+    $venvPy = Join-Path $VENV_DIR "Scripts\python.exe"
+    if (!(Test-Path "$VENV_DIR\Scripts\Activate.ps1")) { Write-Warn "venv missing activate script."; return $false }
+    if (!(Test-Path $venvPy))                          { Write-Warn "venv missing python binary.";   return $false }
+
+    $minor = & $venvPy -c "import sys; print(sys.version_info.minor)" 2>$null
+    if ("$minor".Trim() -ne "$REQUIRED_PYTHON_MINOR") {
+        Write-Warn "venv python is 3.$minor, need 3.$REQUIRED_PYTHON_MINOR."
+        return $false
+    }
+
+    & $venvPy -c "import importlib.util, sys; missing=[p for p in ['fastapi','uvicorn','cv2','torch','reportlab'] if importlib.util.find_spec(p) is None]; sys.exit(1) if missing else None" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "venv is missing required packages."
+        return $false
+    }
+    return $true
+}
+
+function Remove-StaleVenvs {
+    foreach ($dir in @("venv", "env", ".env", "venv3", ".venv3", ".venv_old")) {
+        if (Test-Path $dir) {
+            Write-Warn "Removing stale environment: $dir"
+            Remove-Item -Recurse -Force $dir
+        }
+    }
 }
 
 function Kill-Port($port) {
@@ -79,7 +118,6 @@ Write-Host "============================================" -ForegroundColor White
 Write-Host "  Accessibility Audit Tool - Windows Setup " -ForegroundColor White
 Write-Host "============================================" -ForegroundColor White
 
-# Always run from this script's own folder so relative paths work.
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 Write-Host "  Project root: $Root"
@@ -95,37 +133,53 @@ foreach ($required in @("requirements.txt", "backend\main.py", "frontend\package
     }
 }
 
-# ── Install Python (if missing) ───────────────────────────────────────────────
+# ── Virtual environment setup ─────────────────────────────────────────────────
 
-Write-Step "Checking Python..."
+Write-Step "Checking virtual environment..."
+Remove-StaleVenvs
 
-if (!(Test-Command "python")) {
-    Write-Warn "Python not found. Attempting automatic installation..."
-    Ensure-Winget
-    Install-WithWinget "Python.Python.3.12" "Python 3.12"
-    Refresh-Path
+if (!(Test-VenvOk)) {
+    if (Test-Path $VENV_DIR) {
+        Write-Warn "Existing venv is unhealthy — removing it."
+        Remove-Item -Recurse -Force $VENV_DIR
+    }
+
+    $Python311 = Find-Python311
+    if (!$Python311) {
+        Write-Info "Python 3.11 not found. Attempting automatic installation..."
+        Install-WithWinget "Python.Python.3.11" "Python 3.11"
+        $Python311 = Find-Python311
+    }
+    if (!$Python311) {
+        Write-Err "Python 3.11 not found after installation attempt."
+        Write-Host "  Install Python 3.11 from https://www.python.org/downloads/"
+        Write-Host "  Tick 'Add Python to PATH' during setup, then re-run this script."
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+
+    $pyVersion = & $Python311 --version 2>&1
+    Write-Info "Creating new venv with $Python311 ($pyVersion)..."
+    & $Python311 -m venv $VENV_DIR
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to create virtual environment."
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+    Write-Info "Venv created."
 }
 
-if (!(Test-Command "python")) {
-    Write-Err "Python still not found after installation."
-    Write-Host "  Please install Python manually from https://www.python.org/downloads/"
-    Write-Host "  Tick 'Add Python to PATH' during setup, then re-run this script."
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+Write-Info "Virtual environment ready."
 
-$pyVersion = python --version 2>&1
-Write-OK "Found: $pyVersion"
+$VenvPython = Join-Path $Root "$VENV_DIR\Scripts\python.exe"
 
-# ── Install Node.js / npm (if missing) ────────────────────────────────────────
+# ── Check / install Node.js / npm ─────────────────────────────────────────────
 
 Write-Step "Checking Node.js / npm..."
 
 if (!(Test-Command "npm") -and !(Test-Command "npm.cmd")) {
     Write-Warn "npm not found. Attempting automatic installation..."
-    Ensure-Winget
     Install-WithWinget "OpenJS.NodeJS.LTS" "Node.js LTS"
-    Refresh-Path
 }
 
 $npmCmd = if (Test-Command "npm.cmd") { "npm.cmd" } elseif (Test-Command "npm") { "npm" } else { $null }
@@ -138,47 +192,36 @@ if (!$npmCmd) {
 }
 
 $npmVersion = & $npmCmd --version 2>&1
-Write-OK "Found: npm $npmVersion"
-
-# ── Python virtual environment ─────────────────────────────────────────────────
-
-Write-Step "Setting up Python virtual environment..."
-
-if (!(Test-Path ".venv\Scripts\python.exe")) {
-    Write-Host "  Creating .venv..."
-    python -m venv .venv
-}
-
-$VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
-$VenvPip    = Join-Path $Root ".venv\Scripts\pip.exe"
-
-if (!(Test-Path $VenvPython)) {
-    Write-Err "Virtual environment creation failed."
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
-Write-OK "Virtual environment ready."
+Write-Info "Found: npm $npmVersion"
 
 # ── Backend Python dependencies ────────────────────────────────────────────────
 
-$pipStamp = ".venv\.deps-installed"
+Write-Step "Checking backend dependencies..."
+
+$pipStamp = "$VENV_DIR\.deps-installed"
+$needsPip = $true
 if ((Test-Path $pipStamp) -and (Get-Item "requirements.txt").LastWriteTime -le (Get-Item $pipStamp).LastWriteTime) {
-    Write-Step "Backend dependencies up to date, skipping pip install."
-} else {
-    Write-Step "Installing backend Python dependencies..."
-    & $VenvPython -m pip install --upgrade pip --quiet
-    & $VenvPython -m pip install -r requirements.txt
+    $needsPip = $false
+}
+
+if ($needsPip) {
+    Write-Info "Installing backend Python dependencies..."
+    Write-Host "  (PyTorch is large — this may take several minutes on first install)"
+    & $VenvPython -m pip install --no-cache-dir -r requirements.txt
     if ($LASTEXITCODE -ne 0) {
         Write-Err "pip install failed. Check requirements.txt and the error above."
         Read-Host "Press Enter to exit"
         exit 1
     }
     New-Item -Path $pipStamp -ItemType File -Force | Out-Null
-    Write-OK "Backend dependencies installed."
+    Write-Info "Backend dependencies installed."
+} else {
+    Write-Info "Backend dependencies up to date."
 }
 
 # ── Frontend Node.js dependencies ─────────────────────────────────────────────
+
+Write-Step "Checking frontend dependencies..."
 
 $npmStamp = "frontend\node_modules\.install-stamp"
 $needsNpm = $true
@@ -189,7 +232,7 @@ if (Test-Path $npmStamp) {
     if (!$pkgNewer -and !$lockNewer) { $needsNpm = $false }
 }
 if ($needsNpm) {
-    Write-Step "Installing frontend Node.js dependencies..."
+    Write-Info "Installing frontend Node.js dependencies..."
     Push-Location "frontend"
     & $npmCmd ci 2>$null
     if ($LASTEXITCODE -ne 0) { & $npmCmd install }
@@ -201,58 +244,58 @@ if ($needsNpm) {
     }
     New-Item -Path "node_modules\.install-stamp" -ItemType File -Force | Out-Null
     Pop-Location
-    Write-OK "Frontend dependencies installed."
+    Write-Info "Frontend dependencies installed."
 } else {
-    Write-Step "Frontend dependencies up to date, skipping npm install."
+    Write-Info "Frontend dependencies up to date."
 }
 
 # ── Clear occupied ports ───────────────────────────────────────────────────────
 
-Write-Step "Clearing ports 8000 and 3000..."
+Write-Step "Checking for leftover processes..."
 Kill-Port 8000
 Kill-Port 3000
-Write-OK "Ports cleared."
+Write-Info "Ports cleared."
 
 # ── Start backend ──────────────────────────────────────────────────────────────
 
-Write-Step "Starting backend  ->  http://127.0.0.1:8000"
-Write-Host "  (first start may take ~15 seconds while PyTorch loads)"
+Write-Step "Starting backend  ->  http://localhost:8000"
+Write-Host "  (PyTorch model loading may take up to 2-3 minutes on first start)"
 
 $BackendPath    = Join-Path $Root "backend"
-$BackendCommand = "cd /d `"$BackendPath`" && `"$VenvPython`" -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload"
+$BackendCommand = "cd /d `"$BackendPath`" && set PYTHONUNBUFFERED=1 && `"$VenvPython`" -m uvicorn main:app --host 127.0.0.1 --port 8000"
 
 Start-Process cmd.exe -ArgumentList "/k", $BackendCommand -WindowStyle Normal
 
-Write-Host "  Waiting for backend to become ready..."
-if (!(Wait-ForUrl "http://127.0.0.1:8000/docs" 80)) {
-    Write-Err "Backend did not start within 80 seconds."
+Write-Info "Waiting for backend..."
+if (!(Wait-ForUrl "http://127.0.0.1:8000/docs" 300)) {
+    Write-Err "Backend did not start within 300 seconds."
     Write-Host "  Check the backend terminal window for the error."
     Read-Host "Press Enter to exit"
     exit 1
 }
-Write-OK "Backend is running."
+Write-Info "Backend ready!"
 
 # ── Start frontend ─────────────────────────────────────────────────────────────
 
 Write-Step "Starting frontend ->  http://localhost:3000"
 
 $FrontendPath    = Join-Path $Root "frontend"
-$FrontendCommand = "cd /d `"$FrontendPath`" && $npmCmd start"
+$FrontendCommand = "cd /d `"$FrontendPath`" && set BROWSER=none && set GENERATE_SOURCEMAP=false && set NODE_OPTIONS=--max-old-space-size=512 && $npmCmd start"
 
 Start-Process cmd.exe -ArgumentList "/k", $FrontendCommand -WindowStyle Normal
 
-Write-Host "  Waiting for frontend to become ready..."
-if (!(Wait-ForUrl "http://localhost:3000" 80)) {
-    Write-Err "Frontend did not start within 80 seconds."
+Write-Info "Waiting for frontend..."
+if (!(Wait-ForUrl "http://localhost:3000" 300)) {
+    Write-Err "Frontend did not start within 300 seconds."
     Write-Host "  Check the frontend terminal window for the error."
     Read-Host "Press Enter to exit"
     exit 1
 }
-Write-OK "Frontend is running."
+Write-Info "Frontend ready!"
 
 # ── Open browser ───────────────────────────────────────────────────────────────
 
-Write-Step "Opening app in default browser..."
+Write-Step "Opening browser..."
 Start-Process "http://localhost:3000"
 
 # ── Done ───────────────────────────────────────────────────────────────────────
@@ -264,6 +307,7 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host "  Backend:  http://127.0.0.1:8000"
 Write-Host "  Frontend: http://localhost:3000"
 Write-Host ""
+Write-Host "  Both servers are running."
 Write-Host "  To stop: close the backend and frontend terminal windows."
 Write-Host ""
 Read-Host "Press Enter to close this launcher window"
