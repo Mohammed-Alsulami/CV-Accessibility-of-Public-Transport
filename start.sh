@@ -38,11 +38,14 @@ _venv_ok() {
     [ "$minor" = "$REQUIRED_PYTHON_MINOR" ] \
         || { _warn "venv python is 3.${minor}, need 3.${REQUIRED_PYTHON_MINOR}."; return 1; }
 
-    local pkg failed=0
-    for pkg in fastapi uvicorn cv2 torch reportlab; do
-        "$VENV_DIR/bin/python" -c "import $pkg" 2>/dev/null || { _warn "missing package: $pkg"; failed=1; }
-    done
-    return $failed
+    "$VENV_DIR/bin/python" - <<'PYCHECK' 2>/dev/null
+import importlib.util, sys
+missing = [p for p in ["fastapi","uvicorn","cv2","torch","reportlab"]
+           if importlib.util.find_spec(p) is None]
+if missing:
+    print("  ! missing packages: " + ", ".join(missing), file=sys.stderr)
+    sys.exit(1)
+PYCHECK
 }
 
 # ── Remove stale / extra venv directories ─────────────────
@@ -80,9 +83,12 @@ echo ""
 echo "Checking backend dependencies..."
 
 NEED_INSTALL=0
-for pkg in fastapi uvicorn cv2 torch reportlab; do
-    python -c "import $pkg" 2>/dev/null || { NEED_INSTALL=1; break; }
-done
+python - <<'PYCHECK' 2>/dev/null || NEED_INSTALL=1
+import importlib.util, sys
+missing = [p for p in ["fastapi","uvicorn","cv2","torch","reportlab"]
+           if importlib.util.find_spec(p) is None]
+if missing: sys.exit(1)
+PYCHECK
 
 if [ "$NEED_INSTALL" -eq 1 ] || [ requirements.txt -nt "$VENV_DIR/.deps-installed" ]; then
     echo ""
@@ -90,10 +96,6 @@ if [ "$NEED_INSTALL" -eq 1 ] || [ requirements.txt -nt "$VENV_DIR/.deps-installe
     echo "(PyTorch is large — this may take several minutes on first install)"
     pip install --no-cache-dir -r requirements.txt || _die "pip install failed."
     touch "$VENV_DIR/.deps-installed"
-
-    echo ""
-    _info "Clearing pip download cache to free disk space..."
-    pip cache purge 2>/dev/null || true
     _info "Done. Venv size: $(du -sh "$VENV_DIR" 2>/dev/null | cut -f1)"
 else
     _info "Backend dependencies up to date."
@@ -108,25 +110,25 @@ if [ ! -d frontend/node_modules ] || \
    { [ -f frontend/package-lock.json ] && [ frontend/package-lock.json -nt frontend/node_modules/.install-stamp ]; }; then
     echo "Installing frontend Node.js dependencies..."
     (cd frontend && npm ci 2>/dev/null || npm install) && touch frontend/node_modules/.install-stamp
-    _info "Clearing npm cache to free disk space..."
-    npm cache clean --force 2>/dev/null || true
 else
     _info "Frontend dependencies up to date."
 fi
 
-# ── Clear ports if already occupied ───────────────────────
+# ── Kill any leftover server processes from previous sessions ──
 echo ""
+echo "Checking for leftover processes..."
+pkill -f "uvicorn main:app"   2>/dev/null || true
+pkill -f "react-scripts start" 2>/dev/null || true
+
 for port in 8000 3000; do
     pids=$(lsof -ti :"$port" 2>/dev/null)
     if [ -n "$pids" ]; then
-        _info "Freeing port $port..."
-        echo "$pids" | xargs kill 2>/dev/null || true
-        sleep 1
-        lsof -ti :"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+        _info "Freeing port $port (pid: $pids)..."
+        echo "$pids" | xargs kill -9 2>/dev/null || true
     fi
 done
 
-# ── Start backend ──────────────────────────────────────────
+# ── Start backend and frontend in parallel ─────────────────
 echo ""
 echo "Starting backend  →  http://localhost:8000"
 echo "(PyTorch model loading may take up to 2-3 minutes on first start)"
@@ -135,64 +137,56 @@ BACKEND_LOG="$(pwd)/$VENV_DIR/backend_run.log"
 (cd backend && PYTHONUNBUFFERED=1 python -m uvicorn main:app --host 127.0.0.1 --port 8000 2>&1 | tee "$BACKEND_LOG") &
 BACKEND_PID=$!
 
-echo -n "  Waiting for backend"
-BACKEND_READY=0
-for i in $(seq 1 300); do
-    sleep 1
-    if curl -sf http://127.0.0.1:8000/ > /dev/null 2>&1; then
-        BACKEND_READY=1
-        echo " ready! (${i}s)"
-        break
-    fi
-    if ! kill -0 $BACKEND_PID 2>/dev/null; then
-        echo ""
-        echo ""
-        echo "ERROR: Backend exited unexpectedly. Log:"
-        cat "$BACKEND_LOG"
-        rm -f "$BACKEND_LOG"
-        exit 1
-    fi
-    echo -n "."
-done
-
-if [ "$BACKEND_READY" -eq 0 ]; then
-    echo ""
-    echo ""
-    echo "ERROR: Backend did not respond within 300 seconds. Log:"
-    cat "$BACKEND_LOG"
-    rm -f "$BACKEND_LOG"
-    kill $BACKEND_PID 2>/dev/null
-    exit 1
-fi
-
-echo "Backend is running at http://localhost:8000"
-
-# ── Start frontend ─────────────────────────────────────────
-echo ""
 echo "Starting frontend →  http://localhost:3000"
 
 FRONTEND_LOG="$(pwd)/$VENV_DIR/frontend_run.log"
 # react-scripts 5 is incompatible with Node 22+ — use Node 20 if available
 NODE20_BIN=$(ls -d "$HOME/.nvm/versions/node/v20."*/bin 2>/dev/null | tail -1)
 FRONTEND_PATH="${NODE20_BIN:+$NODE20_BIN:}$PATH"
-(cd frontend && env PATH="$FRONTEND_PATH" BROWSER=none npm start 2>&1 | tee "$FRONTEND_LOG") &
+# GENERATE_SOURCEMAP=false skips source map generation, cutting webpack startup time significantly.
+# NODE_OPTIONS caps the webpack Node.js heap at 512 MB to limit swap pressure on RAM-constrained machines.
+(cd frontend && env PATH="$FRONTEND_PATH" BROWSER=none GENERATE_SOURCEMAP=false NODE_OPTIONS='--max-old-space-size=512' npm start 2>&1 | tee "$FRONTEND_LOG") &
 FRONTEND_PID=$!
 
-echo -n "  Waiting for frontend"
+echo -n "  Waiting for backend and frontend"
+BACKEND_READY=0
 FRONTEND_READY=0
 for i in $(seq 1 300); do
     sleep 1
-    if grep -q "Compiled successfully\|webpack compiled successfully\|webpack compiled with" "$FRONTEND_LOG" 2>/dev/null; then
-        FRONTEND_READY=1
-        echo " ready! (${i}s)"
+
+    if [ "$BACKEND_READY" -eq 0 ] && curl -sf http://127.0.0.1:8000/ > /dev/null 2>&1; then
+        BACKEND_READY=1
+        echo ""
+        _info "Backend ready! (${i}s)"
+    fi
+
+    if [ "$FRONTEND_READY" -eq 0 ]; then
+        if grep -q "Compiled successfully\|webpack compiled successfully\|webpack compiled with" "$FRONTEND_LOG" 2>/dev/null; then
+            FRONTEND_READY=1
+            echo ""
+            _info "Frontend ready! (${i}s)"
+        elif curl -sf http://localhost:3000/ > /dev/null 2>&1; then
+            FRONTEND_READY=1
+            echo ""
+            _info "Frontend ready! (${i}s)"
+        fi
+    fi
+
+    if [ "$BACKEND_READY" -eq 1 ] && [ "$FRONTEND_READY" -eq 1 ]; then
         break
     fi
-    if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
-        FRONTEND_READY=1
-        echo " ready! (${i}s)"
-        break
+
+    if ! kill -0 $BACKEND_PID 2>/dev/null && [ "$BACKEND_READY" -eq 0 ]; then
+        echo ""
+        echo ""
+        echo "ERROR: Backend exited unexpectedly. Log:"
+        cat "$BACKEND_LOG"
+        rm -f "$BACKEND_LOG"
+        kill $FRONTEND_PID 2>/dev/null
+        rm -f "$FRONTEND_LOG"
+        exit 1
     fi
-    if ! kill -0 $FRONTEND_PID 2>/dev/null; then
+    if ! kill -0 $FRONTEND_PID 2>/dev/null && [ "$FRONTEND_READY" -eq 0 ]; then
         echo ""
         echo ""
         echo "ERROR: Frontend exited unexpectedly. Log:"
@@ -202,8 +196,20 @@ for i in $(seq 1 300); do
         rm -f "$BACKEND_LOG"
         exit 1
     fi
+
     echo -n "."
 done
+
+if [ "$BACKEND_READY" -eq 0 ]; then
+    echo ""
+    echo ""
+    echo "ERROR: Backend did not respond within 300 seconds. Log:"
+    cat "$BACKEND_LOG"
+    rm -f "$BACKEND_LOG"
+    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
+    rm -f "$FRONTEND_LOG"
+    exit 1
+fi
 
 if [ "$FRONTEND_READY" -eq 0 ]; then
     echo ""
@@ -214,6 +220,7 @@ if [ "$FRONTEND_READY" -eq 0 ]; then
     exit 1
 fi
 
+echo "Backend is running at http://localhost:8000"
 echo "Frontend is running at http://localhost:3000"
 
 # ── Open browser ───────────────────────────────────────────

@@ -38,12 +38,30 @@ ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov"}
 
 
+MAX_DISPLAY_PX = 1024
+
+
 def validate_image_bytes(file_bytes):
     try:
         image = Image.open(io.BytesIO(file_bytes))
         image.verify()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file.")
+
+
+def _resize_for_display(image_bytes, max_px=MAX_DISPLAY_PX, save_format="JPEG", quality=85):
+    """Return resized image bytes; only downscales if either dimension exceeds max_px."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if img.width <= max_px and img.height <= max_px:
+        if save_format.upper() == "JPEG":
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+            return buf.getvalue()
+        return image_bytes
+    img.thumbnail((max_px, max_px), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format=save_format, quality=quality)
+    return buf.getvalue()
 
 
 def validate_uploaded_file(file_bytes, filename):
@@ -123,9 +141,6 @@ async def analyze(
 
     input_id = save_user_input_image(file.filename, image_bytes)
 
-    # Also encode the original image so the frontend can display it
-    input_image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-
     try:
         result = analyze_uploaded_file(image_bytes, file.filename)
     except ValueError as e:
@@ -144,7 +159,13 @@ async def analyze(
         report_pdf=result["report_pdf"],
     )
 
-    output_image_base64 = base64.b64encode(result["output_image_data"]).decode("utf-8")
+    # Both input_image_data and output_image_data are always JPEG/PNG bytes at this point —
+    # for videos, input_image_data is the best analyzed frame, not the raw video bytes.
+    input_display_bytes = _resize_for_display(result["input_image_data"], save_format="JPEG")
+    input_image_base64 = base64.b64encode(input_display_bytes).decode("utf-8")
+
+    output_display_bytes = _resize_for_display(result["output_image_data"], save_format="PNG")
+    output_image_base64 = base64.b64encode(output_display_bytes).decode("utf-8")
     pdf_base64 = base64.b64encode(result["report_pdf"]).decode("utf-8")
 
     return JSONResponse(content={

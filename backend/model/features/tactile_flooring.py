@@ -3,11 +3,8 @@ import os
 import time
 
 import numpy as np
-import torch
 from PIL import Image
-from torchvision import transforms
 
-from ..src import GRFBUNet
 from ..utils import create_overlay
 from .base import FeatureDetector
 
@@ -26,6 +23,7 @@ class TactileFlooringDetector(FeatureDetector):
 
     def __init__(self):
         self._model = None
+        self._transform = None
 
     @property
     def feature_name(self) -> str:
@@ -40,6 +38,16 @@ class TactileFlooringDetector(FeatureDetector):
         return self._MODEL_PATH
 
     def load(self, device) -> None:
+        import torch
+        from torchvision import transforms
+        from ..src import GRFBUNet
+
+        self._transform = transforms.Compose([
+            transforms.Resize(565),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.709, 0.381, 0.224), std=(0.127, 0.079, 0.043)),
+        ])
+
         classes = 1
         model = GRFBUNet(in_channels=3, num_classes=classes + 1, base_c=32)
 
@@ -53,18 +61,10 @@ class TactileFlooringDetector(FeatureDetector):
         self._model = model
 
     def _preprocess(self, image):
-        mean = (0.709, 0.381, 0.224)
-        std = (0.127, 0.079, 0.043)
-
-        transform = transforms.Compose([
-            transforms.Resize(565),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std),
-        ])
-
-        return transform(image)
+        return self._transform(image)
 
     def run_on_image(self, original_img, device, threshold: int = 500):
+        import torch
         original_w, original_h = original_img.size
 
         img = self._preprocess(original_img)

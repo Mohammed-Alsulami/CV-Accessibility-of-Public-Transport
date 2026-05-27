@@ -33,3 +33,4 @@ backend/model/output_report.pdf
 # OS files
 .DS_Store
 Thumbs.db
+backend/accessibility.db

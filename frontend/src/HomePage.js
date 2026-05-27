@@ -25,11 +25,11 @@ export default function HomePage() {
       return;
     }
 
-    const isVideo = f.type.startsWith("video/");
-    const limit = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-    const limitLabel = isVideo ? "100 MB" : "20 MB";
+    const fileIsVideo = f.type.startsWith("video/");
+    const limit = fileIsVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    const limitLabel = fileIsVideo ? "100 MB" : "20 MB";
     if (f.size > limit) {
-      setError(`File is too large. Maximum size for ${isVideo ? "video" : "image"} files is ${limitLabel}.`);
+      setError(`File is too large. Maximum size for ${fileIsVideo ? "video" : "image"} files is ${limitLabel}.`);
       return;
     }
 
@@ -40,7 +40,7 @@ export default function HomePage() {
   };
 
   const handleAnalyse = async () => {
-    if (!file) return alert("Upload an image first");
+    if (!file) return alert("Upload a file first");
 
     setLoading(true);
     setError(null);
@@ -94,8 +94,9 @@ export default function HomePage() {
         <section style={styles.card}>
           <h2 style={styles.h2}>Analyse Infrastructure</h2>
           <p style={styles.subtext}>
-            Upload an image in order to identify tactile flooring and assess its
-            compliance with DSAPT standards.
+            Upload an image or video to identify tactile flooring and assess its
+            compliance with DSAPT standards. For videos, the highest-quality frame
+            is automatically selected for analysis.
           </p>
 
           <div onClick={handleUploadClick} style={styles.uploadBox}>
@@ -108,6 +109,15 @@ export default function HomePage() {
             />
             {!preview ? (
               <div style={styles.uploadState}>Click to upload image or video</div>
+            ) : file?.type?.startsWith("video/") ? (
+              <video
+                src={preview}
+                style={styles.preview}
+                muted
+                playsInline
+                controls
+                onClick={(e) => e.stopPropagation()}
+              />
             ) : (
               <img src={preview} style={styles.preview} alt="preview" />
             )}
@@ -214,14 +224,16 @@ export default function HomePage() {
             {/* INPUT + OUTPUT IMAGES */}
             {(report.input_image || report.output_image) && (
               <div>
-                <h3 style={styles.h3}>Image Analysis</h3>
+                <h3 style={styles.h3}>Visual Analysis</h3>
                 <div style={styles.imageGrid}>
                   {report.input_image && (
                     <div style={styles.imageBlock}>
-                      <div style={styles.imageLabel}>Original Image</div>
+                      <div style={styles.imageLabel}>
+                        {file?.type?.startsWith("video/") ? "Best Analysed Frame" : "Original Image"}
+                      </div>
                       <img
                         src={`data:image/jpeg;base64,${report.input_image}`}
-                        alt="Original"
+                        alt="Input"
                         style={styles.resultImage}
                       />
                     </div>
