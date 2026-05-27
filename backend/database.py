@@ -161,6 +161,13 @@ def get_output_by_id(output_id: int):
         return dict(row) if row else None
 
 
+def clear_db():
+    with get_connection() as conn:
+        conn.execute("DELETE FROM user_image_output")
+        conn.execute("DELETE FROM user_input_images")
+        conn.commit()
+
+
 def get_all_outputs():
     with get_connection() as conn:
         rows = conn.execute("""
