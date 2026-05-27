@@ -44,10 +44,6 @@ if not exist "frontend\package.json" (
 )
 
 :: -- Locate Python 3.11 -------------------------------------------------------
-:: NOTE: the version checks use `assert` (no parentheses) and the control flow
-:: uses goto / && / || instead of if(...) blocks, because cmd mis-counts the
-:: ")" inside a quoted command and closes the block early ("unexpected at this
-:: time"). Keep parens-containing commands OUT of ( ) blocks.
 
 echo.
 echo ^>^>^> Checking Python 3.11...
@@ -55,48 +51,72 @@ echo ^>^>^> Checking Python 3.11...
 set "PY311_CMD="
 set "PY311_ARG="
 
-:: Try the Windows Python Launcher (py -3.11) first.
-where py >nul 2>&1 || goto :py_try_python
-py -3.11 -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 || goto :py_try_python
-set "PY311_CMD=py"
-set "PY311_ARG=-3.11"
-goto :py_have
+:: Try py launcher first
+where py >nul 2>&1
+if not errorlevel 1 (
+    py -3.11 --version >nul 2>&1
+    if not errorlevel 1 (
+        set "PY311_CMD=py"
+        set "PY311_ARG=-3.11"
+    )
+)
 
-:py_try_python
-:: Fall back to the default python command.
-where python >nul 2>&1 || goto :py_install
-python -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 || goto :py_install
-set "PY311_CMD=python"
-goto :py_have
+:: Fallback to plain python
+if not defined PY311_CMD (
+    where python >nul 2>&1
+    if not errorlevel 1 (
+        python --version >nul 2>&1
+        if not errorlevel 1 (
+            for /f "tokens=2 delims= " %%V in ('python --version 2^>^&1') do (
+                set "PYVER=%%V"
+            )
 
-:py_install
-echo   Python 3.11 not found. Attempting automatic installation...
-where winget >nul 2>&1 || goto :py_no_winget
-winget install --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
-:: Refresh PATH for this session.
-for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYSPATH=%%B"
-for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USRPATH=%%B"
-set "PATH=!SYSPATH!;!USRPATH!"
-:: Re-check after install.
-where py >nul 2>&1 && py -3.11 -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 && set "PY311_CMD=py" && set "PY311_ARG=-3.11"
-if defined PY311_CMD goto :py_have
-where python >nul 2>&1 && python -c "import sys;assert sys.version_info.minor==11" >nul 2>&1 && set "PY311_CMD=python"
-if defined PY311_CMD goto :py_have
-echo.
-echo ERROR: Python 3.11 not found after installation attempt.
-echo   Install Python 3.11 from https://www.python.org/downloads/
-echo   Tick "Add Python to PATH" during setup, then re-run this script.
-pause
-exit /b 1
+            echo !PYVER! | findstr /b "3.11" >nul
+            if not errorlevel 1 (
+                set "PY311_CMD=python"
+            )
+        )
+    )
+)
 
-:py_no_winget
-echo.
-echo ERROR: winget (Windows Package Manager) was not found.
-echo   winget ships with Windows 10 1809+ / Windows 11.
-echo   Install Python 3.11 manually from https://www.python.org/downloads/
-echo   Tick "Add Python to PATH" during setup, then re-run this script.
-pause
-exit /b 1
+:: Install if missing
+if not defined PY311_CMD (
+    echo   Python 3.11 not found. Attempting automatic installation...
+
+    where winget >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo ERROR: winget not found.
+        echo Install Python 3.11 manually:
+        echo https://www.python.org/downloads/
+        pause
+        exit /b 1
+    )
+
+    winget install --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
+
+    :: refresh PATH
+    for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYSPATH=%%B"
+    for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USRPATH=%%B"
+
+    set "PATH=!SYSPATH!;!USRPATH!"
+
+    where py >nul 2>&1
+    if not errorlevel 1 (
+        py -3.11 --version >nul 2>&1
+        if not errorlevel 1 (
+            set "PY311_CMD=py"
+            set "PY311_ARG=-3.11"
+        )
+    )
+
+    if not defined PY311_CMD (
+        echo.
+        echo ERROR: Python 3.11 installation failed.
+        pause
+        exit /b 1
+    )
+)
 
 :py_have
 if "!PY311_ARG!"=="" (
@@ -258,7 +278,10 @@ echo.
 echo ^>^>^> Starting backend  -^>  http://localhost:8000
 echo (PyTorch model loading may take up to 2-3 minutes on first start)
 
-start "Backend - Accessibility Audit Tool" cmd /k "cd /d "%~dp0backend" && set PYTHONUNBUFFERED=1 && "%~dp0.venv\Scripts\python.exe" -m uvicorn main:app --host 127.0.0.1 --port 8000"
+start /B cmd /c ^
+"cd /d ""%~dp0backend"" ^
+&& set PYTHONUNBUFFERED=1 ^
+&& ""%~dp0.venv\Scripts\python.exe"" -m uvicorn main:app --host 127.0.0.1 --port 8000"
 
 echo   Waiting for backend...
 set /a TRIES=0
@@ -271,7 +294,7 @@ if !TRIES! gtr 150 (
     pause
     exit /b 1
 )
-curl -s --max-time 3 http://127.0.0.1:8000/docs >nul 2>&1
+powershell -Command "(Invoke-WebRequest http://127.0.0.1:8000/docs -UseBasicParsing -TimeoutSec 3) > $null" >nul 2>&1
 if errorlevel 1 (
     timeout /t 2 /nobreak >nul
     goto WAIT_BACKEND
@@ -288,12 +311,23 @@ echo ^>^>^> Starting frontend -^>  http://localhost:3000
 :: parent environment so the frontend window inherits it; no fixed heap cap.
 :: Node major is read via `node -v` (parens-free) to stay clear of the cmd bug.
 set "NODE_MAJOR=0"
-for /f "tokens=1 delims=." %%V in ('node -v 2^>nul') do set "NODE_MAJOR=%%V"
-set "NODE_MAJOR=!NODE_MAJOR:v=!"
-set "NODE_OPTIONS="
-if !NODE_MAJOR! geq 17 set "NODE_OPTIONS=--openssl-legacy-provider"
 
-start "Frontend - Accessibility Audit Tool" cmd /k "cd /d "%~dp0frontend" && set BROWSER=none && set GENERATE_SOURCEMAP=false && npm start"
+for /f %%V in ('node -p "process.versions.node.split('.')[0]"') do (
+    set "NODE_MAJOR=%%V"
+)
+
+set "NODE_OPTIONS="
+
+if !NODE_MAJOR! GEQ 17 (
+    set "NODE_OPTIONS=--openssl-legacy-provider"
+)
+
+start /B cmd /c ^
+"cd /d ""%~dp0frontend"" ^
+&& set BROWSER=none ^
+&& set CI=true ^
+&& set GENERATE_SOURCEMAP=false ^
+&& npm start"
 
 echo   Waiting for frontend...
 set /a TRIES=0
@@ -306,7 +340,7 @@ if !TRIES! gtr 150 (
     pause
     exit /b 1
 )
-curl -s --max-time 3 http://localhost:3000 >nul 2>&1
+powershell -Command "(Invoke-WebRequest http://localhost:3000 -UseBasicParsing -TimeoutSec 3) > $null" >nul 2>&1
 if errorlevel 1 (
     timeout /t 2 /nobreak >nul
     goto WAIT_FRONTEND
@@ -317,7 +351,7 @@ echo   Frontend is running.
 
 echo.
 echo ^>^>^> Opening browser...
-start "" "http://localhost:3000"
+if not defined GITHUB_ACTIONS start "" "http://localhost:3000"
 
 :: -- Done ---------------------------------------------------------------------
 
@@ -331,4 +365,6 @@ echo.
 echo   Both servers are running.
 echo   To stop: close the backend and frontend terminal windows.
 echo.
+
+if defined GITHUB_ACTIONS exit /b 0
 pause
