@@ -1,7 +1,10 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
+
+const API_KEY = "dev-secret-key";
 
 export default function HomePage() {
   const fileInputRef = useRef(null);
+  const resultsRef   = useRef(null);
 
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -9,6 +12,32 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showDsaptInfo, setShowDsaptInfo] = useState(false);
+
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [viewingHistoryId, setViewingHistoryId] = useState(null);
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch("http://127.0.0.1:8000/analyses", {
+        headers: { "x-api-key": API_KEY },
+      });
+      if (res.ok) setHistory(await res.json());
+    } catch {
+      // backend not reachable — silently skip
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => { loadHistory(); }, []);
+
+  useEffect(() => {
+    if (report && resultsRef.current) {
+      resultsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [report]);
 
   const handleUploadClick = () => fileInputRef.current.click();
 
@@ -44,6 +73,7 @@ export default function HomePage() {
 
     setLoading(true);
     setError(null);
+    setViewingHistoryId(null);
 
     try {
       const formData = new FormData();
@@ -69,10 +99,25 @@ export default function HomePage() {
       if (!res.ok) throw new Error(data.detail || "Analysis failed");
 
       setReport(data);
+      loadHistory();
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleViewAnalysis = async (outputId) => {
+    setViewingHistoryId(outputId);
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/analyses/${outputId}`, {
+        headers: { "x-api-key": API_KEY },
+      });
+      if (!res.ok) throw new Error("Could not load analysis");
+      setReport(await res.json());
+    } catch (err) {
+      alert(err.message);
+      setViewingHistoryId(null);
     }
   };
 
@@ -136,8 +181,18 @@ export default function HomePage() {
 
         {/* RESULTS CARD */}
         {report && (
-          <section style={styles.card}>
+          <section ref={resultsRef} style={styles.card}>
             <h2 style={styles.h2}>Results</h2>
+            {report.filename && (
+              <div style={styles.historyBanner}>
+                Viewing saved analysis for: <strong>{report.filename}</strong>
+                {report.analyzed_at && (
+                  <span style={{ marginLeft: 8, fontWeight: 400, color: "#6b7280" }}>
+                    — {new Date(report.analyzed_at).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            )}
 
 {showDsaptInfo && (
   <div style={styles.popupOverlay}>
@@ -264,6 +319,56 @@ export default function HomePage() {
             )}
           </section>
         )}
+
+        {/* PAST ANALYSES CARD */}
+        <section style={styles.card}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <h2 style={{ ...styles.h2, marginBottom: 0 }}>Past Analyses</h2>
+            <button onClick={loadHistory} disabled={historyLoading} style={styles.refreshButton}>
+              {historyLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+
+          {history.length === 0 ? (
+            <p style={{ ...styles.subtext, textAlign: "center", padding: "20px 0" }}>
+              {historyLoading ? "Loading…" : "No analyses yet. Upload an image above to get started."}
+            </p>
+          ) : (
+            <div style={styles.historyTableWrapper}>
+              <table style={styles.historyTable}>
+                <thead>
+                  <tr>
+                    {["Filename", "Date", "Tactile", "Score", "Compatibility", ""].map((h) => (
+                      <th key={h} style={styles.th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((row) => (
+                    <tr key={row.id} style={viewingHistoryId === row.id ? styles.trActive : styles.tr}>
+                      <td style={styles.td}>{row.filename}</td>
+                      <td style={styles.td}>{new Date(row.analyzed_at).toLocaleString()}</td>
+                      <td style={{ ...styles.td, color: row.has_tactile_flooring ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                        {row.has_tactile_flooring ? "Detected" : "Not Detected"}
+                      </td>
+                      <td style={styles.td}>{row.compatibility_percentage ?? "—"}%</td>
+                      <td style={styles.td}>{row.compatibility_label || "—"}</td>
+                      <td style={styles.td}>
+                        <button
+                          onClick={() => handleViewAnalysis(row.id)}
+                          disabled={viewingHistoryId === row.id}
+                          style={viewingHistoryId === row.id ? styles.viewButtonActive : styles.viewButton}
+                        >
+                          {viewingHistoryId === row.id ? "Viewing" : "View"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
         {/* ABOUT CARD */}
         <section style={styles.card}>
@@ -506,6 +611,86 @@ const styles = {
     textDecoration: "none",
     fontWeight: 600,
     fontSize: 14,
+  },
+
+  /* History banner */
+  historyBanner: {
+    background: "#eff6ff",
+    border: "1px solid #bfdbfe",
+    borderRadius: 8,
+    padding: "8px 14px",
+    fontSize: 13,
+    color: "#1d4ed8",
+    marginBottom: 16,
+  },
+
+  /* Refresh button */
+  refreshButton: {
+    padding: "6px 14px",
+    background: "#f1f5f9",
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "pointer",
+    color: "#374151",
+  },
+
+  /* History table */
+  historyTableWrapper: {
+    overflowX: "auto",
+  },
+
+  historyTable: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: 13.5,
+  },
+
+  th: {
+    textAlign: "left",
+    padding: "8px 12px",
+    borderBottom: "2px solid #e5e7eb",
+    color: "#6b7280",
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+  },
+
+  tr: {
+    borderBottom: "1px solid #f3f4f6",
+  },
+
+  trActive: {
+    borderBottom: "1px solid #f3f4f6",
+    background: "#eff6ff",
+  },
+
+  td: {
+    padding: "10px 12px",
+    color: "#374151",
+    verticalAlign: "middle",
+  },
+
+  viewButton: {
+    padding: "5px 12px",
+    background: "#2563eb",
+    color: "#fff",
+    border: 0,
+    borderRadius: 6,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: 12,
+  },
+
+  viewButtonActive: {
+    padding: "5px 12px",
+    background: "#93c5fd",
+    color: "#fff",
+    border: 0,
+    borderRadius: 6,
+    fontWeight: 600,
+    cursor: "not-allowed",
+    fontSize: 12,
   },
 
   /* FOOTER */

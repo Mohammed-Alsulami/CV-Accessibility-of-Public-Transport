@@ -36,16 +36,38 @@ def init_db():
         # Table 3: AI analysis results linked to each user input image
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_image_output (
-                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-                input_image_id         INTEGER NOT NULL REFERENCES user_input_images(id),
-                output_image_data      BLOB,
-                has_tactile_flooring   INTEGER CHECK (has_tactile_flooring IN (0, 1)),
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_image_id           INTEGER NOT NULL REFERENCES user_input_images(id),
+                output_image_data        BLOB,
+                has_tactile_flooring     INTEGER CHECK (has_tactile_flooring IN (0, 1)),
                 compatibility_percentage REAL,
-                report_pdf             BLOB,
-                analyzed_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                contrast_percentage      REAL,
+                compatibility_label      TEXT,
+                notes                    TEXT,
+                report_pdf               BLOB,
+                analyzed_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
+
+    # Idempotent migration: add columns that may be missing from older DB versions
+    _migrate_db()
+
+
+def _migrate_db():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(user_image_output)")}
+        for column, col_type in [
+            ("contrast_percentage", "REAL"),
+            ("compatibility_label", "TEXT"),
+            ("notes",               "TEXT"),
+        ]:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE user_image_output ADD COLUMN {column} {col_type}")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ── Training data ─────────────────────────────────────────────────────────────
@@ -94,6 +116,9 @@ def save_analysis_output(
     output_image_data: bytes = None,
     has_tactile_flooring: int = None,
     compatibility_percentage: float = None,
+    contrast_percentage: float = None,
+    compatibility_label: str = None,
+    notes: str = None,
     report_pdf: bytes = None,
 ) -> int:
     with get_connection() as conn:
@@ -101,14 +126,39 @@ def save_analysis_output(
             """
             INSERT INTO user_image_output
                 (input_image_id, output_image_data, has_tactile_flooring,
-                 compatibility_percentage, report_pdf)
-            VALUES (?, ?, ?, ?, ?)
+                 compatibility_percentage, contrast_percentage,
+                 compatibility_label, notes, report_pdf)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (input_image_id, output_image_data, has_tactile_flooring,
-             compatibility_percentage, report_pdf),
+             compatibility_percentage, contrast_percentage,
+             compatibility_label, notes, report_pdf),
         )
         conn.commit()
         return cursor.lastrowid
+
+
+def get_output_by_id(output_id: int):
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT
+                o.id,
+                o.input_image_id,
+                i.filename,
+                i.image_data        AS input_image_data,
+                o.output_image_data,
+                o.has_tactile_flooring,
+                o.compatibility_percentage,
+                o.contrast_percentage,
+                o.compatibility_label,
+                o.notes,
+                o.report_pdf,
+                o.analyzed_at
+            FROM user_image_output o
+            JOIN user_input_images i ON i.id = o.input_image_id
+            WHERE o.id = ?
+        """, (output_id,)).fetchone()
+        return dict(row) if row else None
 
 
 def get_all_outputs():
@@ -120,6 +170,8 @@ def get_all_outputs():
                 i.filename,
                 o.has_tactile_flooring,
                 o.compatibility_percentage,
+                o.contrast_percentage,
+                o.compatibility_label,
                 o.analyzed_at
             FROM user_image_output o
             JOIN user_input_images i ON i.id = o.input_image_id

@@ -6,6 +6,7 @@ from database import (
     init_db,
     save_user_input_image,
     save_analysis_output,
+    get_output_by_id,
     get_all_outputs,
 )
 
@@ -84,6 +85,8 @@ def validate_uploaded_file(file_bytes, filename):
 
 
 def safe(v):
+    if isinstance(v, bytes):
+        return None  # never expose raw blobs in list responses
     if isinstance(v, (np.float32, np.float64)):
         return float(v)
     if isinstance(v, (np.int32, np.int64)):
@@ -156,6 +159,9 @@ async def analyze(
         output_image_data=result["output_image_data"],
         has_tactile_flooring=result["has_tactile_flooring"],
         compatibility_percentage=result["compatibility_percentage"],
+        contrast_percentage=result["contrast_percentage"],
+        compatibility_label=result["compatibility_label"],
+        notes=result["notes"],
         report_pdf=result["report_pdf"],
     )
 
@@ -184,5 +190,40 @@ async def analyze(
 
 @app.get("/analyses")
 def list_analyses(api_key: str = Depends(verify_api_key)):
-    return get_all_outputs()
+    rows = get_all_outputs()
+    return JSONResponse(content=[
+        {
+            "id":                       safe(row["id"]),
+            "input_image_id":           safe(row["input_image_id"]),
+            "filename":                 str(row["filename"]) if row["filename"] is not None else None,
+            "has_tactile_flooring":     bool(row["has_tactile_flooring"]) if row["has_tactile_flooring"] is not None else None,
+            "compatibility_percentage": safe(row["compatibility_percentage"]),
+            "contrast_percentage":      safe(row["contrast_percentage"]),
+            "compatibility_label":      str(row["compatibility_label"]) if row["compatibility_label"] is not None else None,
+            "analyzed_at":              str(row["analyzed_at"]) if row["analyzed_at"] is not None else None,
+        }
+        for row in rows
+    ])
+
+
+@app.get("/analyses/{output_id}")
+def get_analysis(output_id: int, api_key: str = Depends(verify_api_key)):
+    row = get_output_by_id(output_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    return JSONResponse(content={
+        "input_image_id":           safe(row["input_image_id"]),
+        "output_id":                safe(row["id"]),
+        "filename":                 str(row["filename"]),
+        "has_tactile_flooring":     bool(row["has_tactile_flooring"]),
+        "compatibility_percentage": safe(row["compatibility_percentage"]),
+        "compatibility_label":      str(row["compatibility_label"] or ""),
+        "contrast_percentage":      safe(row["contrast_percentage"] or 0.0),
+        "notes":                    str(row["notes"] or ""),
+        "analyzed_at":              str(row["analyzed_at"]),
+        "input_image":  base64.b64encode(row["input_image_data"]).decode("utf-8"),
+        "output_image": base64.b64encode(row["output_image_data"]).decode("utf-8"),
+        "report_pdf":   base64.b64encode(row["report_pdf"]).decode("utf-8"),
+    })
 
