@@ -13,6 +13,7 @@ from database import (
 )
 
 import base64
+import struct
 import traceback
 import numpy as np
 import io
@@ -95,6 +96,17 @@ def safe(v):
         return int(v)
     return v
 
+def _decode_contrast(v):
+    """np.float32 values were previously stored as 4-byte BLOB by sqlite3; decode them back."""
+    if isinstance(v, bytes):
+        if len(v) == 4:
+            return float(struct.unpack('<f', v)[0])
+        if len(v) == 8:
+            return float(struct.unpack('<d', v)[0])
+        return 0.0
+    return float(v) if v is not None else 0.0
+
+
 def verify_api_key(x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
@@ -167,7 +179,7 @@ async def analyze(
         output_image_data=result["output_image_data"],
         has_tactile_flooring=result["has_tactile_flooring"],
         compatibility_percentage=result["compatibility_percentage"],
-        contrast_percentage=result["contrast_percentage"],
+        contrast_percentage=float(result["contrast_percentage"]),
         compatibility_label=result["compatibility_label"],
         notes=result["notes"],
         report_pdf=result["report_pdf"],
@@ -206,7 +218,7 @@ def list_analyses(api_key: str = Depends(verify_api_key)):
             "filename":                 str(row["filename"]) if row["filename"] is not None else None,
             "has_tactile_flooring":     bool(row["has_tactile_flooring"]) if row["has_tactile_flooring"] is not None else None,
             "compatibility_percentage": safe(row["compatibility_percentage"]),
-            "contrast_percentage":      safe(row["contrast_percentage"]),
+            "contrast_percentage":      _decode_contrast(row["contrast_percentage"]),
             "compatibility_label":      str(row["compatibility_label"]) if row["compatibility_label"] is not None else None,
             "analyzed_at":              str(row["analyzed_at"]) if row["analyzed_at"] is not None else None,
         }
@@ -227,7 +239,7 @@ def get_analysis(output_id: int, api_key: str = Depends(verify_api_key)):
         "has_tactile_flooring":     bool(row["has_tactile_flooring"]),
         "compatibility_percentage": safe(row["compatibility_percentage"]),
         "compatibility_label":      str(row["compatibility_label"] or ""),
-        "contrast_percentage":      safe(row["contrast_percentage"] or 0.0),
+        "contrast_percentage":      _decode_contrast(row["contrast_percentage"]),
         "notes":                    str(row["notes"] or ""),
         "analyzed_at":              str(row["analyzed_at"]),
         "input_image":  base64.b64encode(row["input_image_data"]).decode("utf-8"),
