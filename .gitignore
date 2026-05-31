@@ -23,10 +23,20 @@ yarn-error.log*
 # Python backend
 __pycache__/
 *.pyc
+.venv/
+venv/
 
 # Large generated/runtime files — too big for GitHub
 *.db
 backend/model/output_report.pdf
+
+# Runtime image directories — keep folder structure but ignore actual images
+backend/images/analysis_output/*
+!backend/images/analysis_output/.gitkeep
+backend/images/training_data/*
+!backend/images/training_data/.gitkeep
+backend/images/user_input/*
+!backend/images/user_input/.gitkeep
 
 # OS files
 .DS_Store

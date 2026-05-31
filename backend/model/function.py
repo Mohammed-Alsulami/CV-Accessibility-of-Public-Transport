@@ -1,16 +1,35 @@
 from datetime import datetime
+import io
 import os
-import time
+import tempfile
+
 import cv2
 import numpy as np
-import torch
 from PIL import Image
-from torchvision import transforms
-import matplotlib.pyplot as plt
-import io
-import tempfile
-import argparse
-from .src import GRFBUNet
+
+from .utils import get_frame_quality_score, is_image_file, is_video_file
+
+# Singleton: model is loaded once at first request and reused for all subsequent requests.
+# Loading PyTorch weights from disk takes 5-30s — doing it per-request was the main bottleneck.
+_cached_detector = None
+_cached_device = None
+
+
+def _get_detector():
+    global _cached_detector, _cached_device
+    if _cached_detector is None:
+        import torch
+        from .features import TactileFlooringDetector
+        # Limit PyTorch threads to avoid overwhelming an already-loaded CPU.
+        torch.set_num_threads(4)
+        torch.set_num_interop_threads(2)
+        _cached_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        det = TactileFlooringDetector()
+        if not os.path.exists(det.model_path):
+            raise FileNotFoundError(f"Model not found: {det.model_path}")
+        det.load(_cached_device)
+        _cached_detector = det
+    return _cached_detector, _cached_device
 
 
 # USER SETTINGS - CHANGE THESE ONLY
@@ -18,8 +37,6 @@ from .src import GRFBUNet
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 INPUT_PATH = ""
-
-MODEL_PATH = os.path.join(BASE_DIR, "weights", "model.pth")
 
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Report_Template.pdf")
 
@@ -30,317 +47,72 @@ THRESHOLD = 500
 FRAME_INTERVAL_SECONDS = 1
 MAX_VIDEO_SECONDS = 10
 
-# DSAPT contrast levels
-DSAPT_MIN_CONTRAST = 30
-DSAPT_MEDIUM_CONTRAST = 45
-DSAPT_HIGH_CONTRAST = 60
-
-# PDF text position for accessibility feature
-# If the text appears in the wrong place, only adjust this Y value.
-ACCESSIBILITY_FEATURE_X = 205.33
-ACCESSIBILITY_FEATURE_Y = 345
-
-
-
-
-# Load Model
-def load_model(model_path, device):
-    classes = 1
-    model = GRFBUNet(in_channels=3, num_classes=classes + 1, base_c=32)
-
-    torch.serialization.add_safe_globals([argparse.Namespace])
-
-
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
-    model.load_state_dict(checkpoint["model"])
-    model.to(device)
-    model.eval()
-
-    return model
-
-
-# Preprocess Image
-def preprocess_image(image):
-    mean = (0.709, 0.381, 0.224)
-    std = (0.127, 0.079, 0.043)
-
-    transform = transforms.Compose([
-        transforms.Resize(565),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=mean, std=std)
-    ])
-
-    return transform(image)
-
-
-# Create Overlay
-def create_overlay(original_img, prediction_mask):
-    orig_np = np.array(original_img).copy()
-    mask_np = np.array(prediction_mask)
-
-    binary_mask = mask_np > 0
-
-    overlay = orig_np.copy()
-    overlay[binary_mask] = [0, 255, 0]
-
-    blended = (0.6 * orig_np + 0.4 * overlay).astype(np.uint8)
-
-    return blended
-
-
-# Check Frame Quality
-def get_frame_quality_score(frame):
-    """
-    Higher score means better frame.
-    This checks:
-    1. Brightness
-    2. Sharpness / blur
-    """
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    brightness = np.mean(gray)
-    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
-
-    # Reject very dark frames
-    if brightness < 50:
-        return 0
-
-    # Reject very blurry frames
-    if blur_score < 100:
-        return 0
-
-    # Combined quality score
-    quality_score = brightness + blur_score
-
-    return quality_score
-
-
-# Run Model on One Image
-def run_model_on_image(model, original_img, device, threshold=500):
-    original_w, original_h = original_img.size
-
-    img = preprocess_image(original_img)
-    img = torch.unsqueeze(img, dim=0)
-
-    with torch.no_grad():
-        start_time = time.time()
-        output = model(img.to(device))
-        end_time = time.time()
-
-        prediction = output["out"].argmax(1).squeeze(0).cpu().numpy().astype(np.uint8)
-
-    prediction = Image.fromarray(prediction)
-    prediction = prediction.resize((original_w, original_h), resample=Image.NEAREST)
-    prediction = np.array(prediction)
-
-    prediction[prediction == 1] = 255
-    prediction[prediction == 0] = 0
-
-    mask_img = Image.fromarray(prediction).convert("L")
-    overlay_img = create_overlay(original_img, mask_img)
-
-    detected_pixels = int(np.sum(np.array(mask_img) > 0))
-    result = "Yes" if detected_pixels > threshold else "No"
-
-    inference_time = end_time - start_time
-    fps = 1.0 / inference_time if inference_time > 0 else 0.0
-
-    return result, detected_pixels, inference_time, fps, overlay_img, mask_img
-
-
-# Calculate Luminance Contrast
-# Calculate Luminance Contrast
-def calculate_luminance_contrast(original_img, mask_img):
-    """
-    Calculates approximate luminance contrast between:
-    1. Raised tactile indicators inside the detected tactile region
-    2. Surrounding non-tactile floor area
-
-    It checks both dark and light tactile indicators, then uses the one
-    with the stronger contrast.
-    """
-
-    img_np = np.array(original_img).astype(np.float32)
-    mask_np = np.array(mask_img)
-
-    tactile_mask = mask_np > 0
-    surrounding_mask = mask_np == 0
-
-    if np.sum(tactile_mask) == 0:
-        return 0.0, 0.0, 0.0
-
-    if np.sum(surrounding_mask) == 0:
-        return 0.0, 0.0, 0.0
-
-    r = img_np[:, :, 0]
-    g = img_np[:, :, 1]
-    b = img_np[:, :, 2]
-
-    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-    tactile_luminance_values = luminance[tactile_mask]
-
-    surrounding_luminance = np.mean(luminance[surrounding_mask])
-
-    # Dark raised indicators candidate
-    dark_threshold = np.percentile(tactile_luminance_values, 25)
-    dark_tactile_mask = tactile_mask & (luminance <= dark_threshold)
-
-    # Light raised indicators candidate
-    light_threshold = np.percentile(tactile_luminance_values, 75)
-    light_tactile_mask = tactile_mask & (luminance >= light_threshold)
-
-    dark_luminance = np.mean(luminance[dark_tactile_mask]) if np.sum(dark_tactile_mask) > 0 else 0.0
-    light_luminance = np.mean(luminance[light_tactile_mask]) if np.sum(light_tactile_mask) > 0 else 0.0
-
-    def contrast(lum1, lum2):
-        lighter = max(lum1, lum2)
-        darker = min(lum1, lum2)
-
-        if lighter == 0:
-            return 0.0
-
-        return ((lighter - darker) / lighter) * 100
-
-    dark_contrast = contrast(dark_luminance, surrounding_luminance)
-    light_contrast = contrast(light_luminance, surrounding_luminance)
-
-    if dark_contrast >= light_contrast:
-        contrast_percentage = dark_contrast
-        tactile_luminance = dark_luminance
-    else:
-        contrast_percentage = light_contrast
-        tactile_luminance = light_luminance
-
-    return contrast_percentage, tactile_luminance, surrounding_luminance
-
-
-# DSAPT Contrast Compatibility
-def get_dsapt_compatibility(result, contrast_percentage):
-    """
-    Converts luminance contrast into DSAPT compatibility score.
-
-    Score logic:
-    No tactile flooring detected = 0%
-    Contrast < 30% = 0%
-    Contrast 30% to 44.99% = 50%
-    Contrast 45% to 59.99% = 75%
-    Contrast >= 60% = 100%
-    """
-
-    if result == "No":
-        compatibility_score = 0
-        compatibility_label = "Not assessed"
-        notes = (
-            "Tactile flooring was not detected in the input image, so DSAPT "
-            "luminance contrast compatibility could not be assessed."
-        )
-
-    elif contrast_percentage < DSAPT_MIN_CONTRAST:
-        compatibility_score = 0
-        compatibility_label = "Not compatible"
-        notes = (
-            f"Tactile flooring was detected, but the estimated luminance contrast "
-            f"is {contrast_percentage:.2f}%. This is below the minimum selected "
-            f"DSAPT contrast level of {DSAPT_MIN_CONTRAST}%, so it is not considered "
-            f"compatible based on contrast."
-        )
-
-    elif contrast_percentage < DSAPT_MEDIUM_CONTRAST:
-        compatibility_score = 50
-        compatibility_label = "Minimum compatibility"
-        notes = (
-            f"Tactile flooring was detected with an estimated luminance contrast "
-            f"of {contrast_percentage:.2f}%. This meets the minimum selected DSAPT "
-            f"contrast level of {DSAPT_MIN_CONTRAST}%, but does not reach the "
-            f"{DSAPT_MEDIUM_CONTRAST}% or {DSAPT_HIGH_CONTRAST}% levels. Therefore, "
-            f"it is considered partially compatible based on contrast."
-        )
-
-    elif contrast_percentage < DSAPT_HIGH_CONTRAST:
-        compatibility_score = 75
-        compatibility_label = "Moderate compatibility"
-        notes = (
-            f"Tactile flooring was detected with an estimated luminance contrast "
-            f"of {contrast_percentage:.2f}%. This exceeds the {DSAPT_MEDIUM_CONTRAST}% "
-            f"contrast level but does not reach the {DSAPT_HIGH_CONTRAST}% high-contrast "
-            f"level. Therefore, it shows moderate DSAPT contrast compatibility."
-        )
-
-    else:
-        compatibility_score = 100
-        compatibility_label = "High compatibility"
-        notes = (
-            f"Tactile flooring was detected with an estimated luminance contrast "
-            f"of {contrast_percentage:.2f}%. This exceeds the {DSAPT_HIGH_CONTRAST}% "
-            f"contrast level, so it is considered highly compatible based on the "
-            f"selected DSAPT contrast criteria."
-        )
-
-    return compatibility_score, compatibility_label, notes
-
-
 # PDF Report Generation
+# output_path=None → returns PDF bytes in memory (no disk I/O).
+# Pass a file path string to write to disk (CLI usage).
 def pdf_report(input_image, processed_image, accessibility_feature,
                dsapt_compliance_score, notes,
-               output_path="output_report.pdf", template_path="Report_Template.pdf"):
+               output_path=None, template_path="Report_Template.pdf"):
 
-    import io
     from reportlab.pdfgen import canvas
     from reportlab.lib.utils import ImageReader
     from pdfrw import PdfReader, PdfWriter, PageMerge
 
     PAGE_W, PAGE_H = 612, 792
 
-    # Convert input to PIL Image
-    # Accepts file path, PIL Image, or numpy array
+    # Value column geometry — read directly from the template PDF content stream.
+    # These numbers are exact: do not adjust them.
+    VAL_X = 198.58   # left edge of the value (right) column
+    VAL_W = 323.65   # width of the value column
+    TEXT_X = 205.33  # where text starts inside each value cell (left padding)
+
     def to_pil(img_input):
         if isinstance(img_input, np.ndarray):
             return Image.fromarray(img_input.astype(np.uint8)).convert("RGB")
-
         if isinstance(img_input, Image.Image):
             return img_input.convert("RGB")
-
         if isinstance(img_input, str) and os.path.exists(img_input):
             return Image.open(img_input).convert("RGB")
-
         return None
 
-    def draw_image_in_cell(c, pil_img, cell_x, cell_y_bottom, cell_w, cell_h, padding=4):
-        iw, ih = pil_img.size
+    def whiteout(c, y_bottom, h):
+        """Cover a template placeholder with a white rectangle."""
+        c.setFillColorRGB(1, 1, 1)
+        c.setStrokeColorRGB(1, 1, 1)
+        c.rect(VAL_X, y_bottom, VAL_W, h, fill=1, stroke=0)
 
+    def draw_image_in_cell(c, pil_img, cell_x, cell_y_bottom, cell_w, cell_h, padding=4):
+        # Downsample to 2× the cell's point dimensions before embedding.
+        # Prevents full-resolution images (e.g. 4 MP) from bloating the PDF.
+        max_embed_w = int(cell_w * 2)
+        max_embed_h = int(cell_h * 2)
+        if pil_img.width > max_embed_w or pil_img.height > max_embed_h:
+            pil_img = pil_img.copy()
+            pil_img.thumbnail((max_embed_w, max_embed_h), Image.LANCZOS)
+        iw, ih = pil_img.size
         max_w = cell_w - 2 * padding
         max_h = cell_h - 2 * padding
-
         scale = min(max_w / iw, max_h / ih)
-
         draw_w = iw * scale
         draw_h = ih * scale
-
         draw_x = cell_x + (cell_w - draw_w) / 2
         draw_y = cell_y_bottom + (cell_h - draw_h) / 2
-
         c.drawImage(ImageReader(pil_img), draw_x, draw_y, draw_w, draw_h)
 
     def draw_wrapped_text(c, text, x, y, max_width, font_name, font_size, line_height):
         words = str(text).split()
         lines = []
         current = ""
-
         for word in words:
             test = (current + " " + word).strip()
-
             if c.stringWidth(test, font_name, font_size) <= max_width:
                 current = test
             else:
                 if current:
                     lines.append(current)
                 current = word
-
         if current:
             lines.append(current)
-
         for line in lines:
             c.drawString(x, y, line)
             y -= line_height
@@ -348,30 +120,40 @@ def pdf_report(input_image, processed_image, accessibility_feature,
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(PAGE_W, PAGE_H))
 
-    # 1. Date
+    # 1. Date  — template cell: y=462.9, h=12.75
+    whiteout(c, 462.9, 12.75)
+    c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica", 11)
-    c.drawString(205.33, 465.15, datetime.now().strftime("%d/%m/%Y"))
+    c.drawString(TEXT_X, 465.15, datetime.now().strftime("%d/%m/%Y"))
 
-    # 2. Input image
+    # 2. Input image  — template cell: y=367.13, h=83.275
+    whiteout(c, 367.13, 83.275)
     pil_in = to_pil(input_image)
     if pil_in:
-        draw_image_in_cell(c, pil_in, 205.33, 360, 540 - 205.33, 100)
+        draw_image_in_cell(c, pil_in, VAL_X, 367.13, VAL_W, 83.275)
 
-    # 3. Accessibility feature detected
+    # 3. Accessibility feature  — template cell: y=329.35, h=25.25
+    whiteout(c, 329.35, 25.25)
+    c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica", 11)
-    c.drawString(ACCESSIBILITY_FEATURE_X, ACCESSIBILITY_FEATURE_Y, accessibility_feature)
+    draw_wrapped_text(c, accessibility_feature, TEXT_X, 344.35, VAL_W - 10, "Helvetica", 11, 13)
 
-    # 4. Processed/output image
+    # 4. Output image  — template cell: y=233.58, h=83.275
+    whiteout(c, 233.58, 83.275)
     pil_out = to_pil(processed_image)
     if pil_out:
-        draw_image_in_cell(c, pil_out, 205.33, 226, 540 - 205.33, 100)
+        draw_image_in_cell(c, pil_out, VAL_X, 233.58, VAL_W, 83.275)
 
-    # 5. DSAPT compatibility score
+    # 5. DSAPT compatibility  — template cell: y=208.33, h=12.75
+    whiteout(c, 208.33, 12.75)
+    c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica", 11)
-    c.drawString(205.33, 210.58, f"{dsapt_compliance_score}%")
+    c.drawString(TEXT_X, 210.58, f"{dsapt_compliance_score}%")
 
-    # 6. Notes
-    draw_wrapped_text(c, notes, 205.33, 185.55, 290, "Helvetica", 10, 12)
+    # 6. Notes  — template cell: y=170.55, h=25.25
+    whiteout(c, 170.55, 25.25)
+    c.setFillColorRGB(0, 0, 0)
+    draw_wrapped_text(c, notes, TEXT_X, 185.55, VAL_W - 10, "Helvetica", 10, 12)
 
     c.save()
     packet.seek(0)
@@ -380,37 +162,38 @@ def pdf_report(input_image, processed_image, accessibility_feature,
     overlay_pdf = PdfReader(packet)
 
     PageMerge(template.pages[0]).add(overlay_pdf.pages[0]).render()
-    PdfWriter(output_path, trailer=template).write()
 
+    if output_path is None:
+        buf = io.BytesIO()
+        PdfWriter(buf, trailer=template).write()
+        return buf.getvalue()
+
+    PdfWriter(output_path, trailer=template).write()
     return output_path
 
 
 # Process Image Input
-def process_image(image_path, model, device, threshold=500):
+def process_image(image_path, detector, device, threshold=500):
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image not found: {image_path}")
 
     original_img = Image.open(image_path).convert("RGB")
 
-    result, detected_pixels, inference_time, fps, overlay_img, mask_img = run_model_on_image(
-        model=model,
+    result, detected_pixels, inference_time, fps, overlay_img, mask_img = detector.run_on_image(
         original_img=original_img,
         device=device,
-        threshold=threshold
+        threshold=threshold,
     )
 
     print("Input type: Image")
     print(f"Detected pixels: {detected_pixels}")
-    print(f"Tactile flooring detected: {result}")
-
-    
+    print(f"{detector.feature_name} detected: {result}")
 
     return original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps
 
 
 # Process Video Input
-
-def process_video(video_path, model, device, threshold=500,
+def process_video(video_path, detector, device, threshold=500,
                   frame_interval_seconds=1, max_video_seconds=10):
 
     if not os.path.exists(video_path):
@@ -446,7 +229,6 @@ def process_video(video_path, model, device, threshold=500,
         if not ret:
             break
 
-        # Only check frames at selected intervals
         if frame_number % frame_step == 0:
             quality_score = get_frame_quality_score(frame)
 
@@ -454,7 +236,7 @@ def process_video(video_path, model, device, threshold=500,
                 selected_frames.append({
                     "frame_number": frame_number,
                     "frame": frame.copy(),
-                    "quality_score": quality_score
+                    "quality_score": quality_score,
                 })
 
         frame_number += 1
@@ -465,79 +247,63 @@ def process_video(video_path, model, device, threshold=500,
         print("No good-quality frames were found.")
         return None, None, None, None, None, None, None
 
-    # Choose the best frame based on brightness and sharpness
     best_frame_info = max(selected_frames, key=lambda x: x["quality_score"])
     best_frame = best_frame_info["frame"]
     best_frame_number = best_frame_info["frame_number"]
 
-    # Convert OpenCV BGR frame to RGB PIL image
     best_frame_rgb = cv2.cvtColor(best_frame, cv2.COLOR_BGR2RGB)
     best_pil_img = Image.fromarray(best_frame_rgb)
 
-    result, detected_pixels, inference_time, fps, overlay_img, mask_img = run_model_on_image(
-        model=model,
+    result, detected_pixels, inference_time, fps, overlay_img, mask_img = detector.run_on_image(
         original_img=best_pil_img,
         device=device,
-        threshold=threshold
+        threshold=threshold,
     )
 
     print(f"Checked frames: {len(selected_frames)}")
     print(f"Best frame number: {best_frame_number}")
     print(f"Best frame quality score: {best_frame_info['quality_score']:.2f}")
     print(f"Detected pixels: {detected_pixels}")
-    print(f"Tactile flooring detected: {result}")
-
-    
+    print(f"{detector.feature_name} detected: {result}")
 
     return best_pil_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps
 
 
-# Detect Input Type
-def is_image_file(file_path):
-    image_extensions = [".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"]
-    ext = os.path.splitext(file_path)[1].lower()
-
-    return ext in image_extensions
-
-
-def is_video_file(file_path):
-    video_extensions = [".mp4", ".mov", ".avi", ".mkv"]
-    ext = os.path.splitext(file_path)[1].lower()
-
-    return ext in video_extensions
-
-
-# Main Function
+# Main Function (CLI entry point)
 def main():
+    import torch
+    from .features import TactileFlooringDetector
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     if not os.path.exists(INPUT_PATH):
         raise FileNotFoundError(f"Input file not found: {INPUT_PATH}")
 
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
-
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"PDF template not found: {TEMPLATE_PATH}")
 
-    model = load_model(MODEL_PATH, device)
+    detector = TactileFlooringDetector()
+
+    if not os.path.exists(detector.model_path):
+        raise FileNotFoundError(f"Model not found: {detector.model_path}")
+
+    detector.load(device)
 
     if is_image_file(INPUT_PATH):
         original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps = process_image(
             image_path=INPUT_PATH,
-            model=model,
+            detector=detector,
             device=device,
-            threshold=THRESHOLD
+            threshold=THRESHOLD,
         )
 
     elif is_video_file(INPUT_PATH):
         original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps = process_video(
             video_path=INPUT_PATH,
-            model=model,
+            detector=detector,
             device=device,
             threshold=THRESHOLD,
             frame_interval_seconds=FRAME_INTERVAL_SECONDS,
-            max_video_seconds=MAX_VIDEO_SECONDS
+            max_video_seconds=MAX_VIDEO_SECONDS,
         )
 
         if original_img is None:
@@ -547,30 +313,26 @@ def main():
     else:
         raise ValueError("Unsupported file type. Please use an image or video file.")
 
-    # Accessibility Feature
     if result == "Yes":
-        accessibility_feature = "Accessibility Feature Detected: Tactile flooring"
+        accessibility_feature = detector.feature_name
     else:
-        accessibility_feature = "No Accessibility Feature Detected"
+        accessibility_feature = "None"
 
-    # DSAPT Contrast-Based Report Values
-    contrast_percentage, tactile_luminance, surrounding_luminance = calculate_luminance_contrast(
-    original_img, mask_img)
-
-    dsapt_compliance_score, dsapt_compatibility_label, notes = get_dsapt_compatibility(
-        result=result,
-        contrast_percentage=contrast_percentage
+    contrast_percentage, region_luminance, surrounding_luminance = detector.calculate_contrast(
+        original_img, mask_img
     )
 
-    
-    print(f"Tactile area luminance: {tactile_luminance:.2f}")
+    dsapt_compliance_score, dsapt_compatibility_label, notes = detector.get_compatibility(
+        detected=result == "Yes",
+        contrast_percentage=contrast_percentage,
+    )
+
+    print(f"Tactile area luminance: {region_luminance:.2f}")
     print(f"Surrounding area luminance: {surrounding_luminance:.2f}")
     print(f"Estimated luminance contrast: {contrast_percentage:.2f}%")
     print(f"DSAPT compatibility score: {dsapt_compliance_score}%")
     print(f"DSAPT compatibility label: {dsapt_compatibility_label}")
-    
 
-    # Generate PDF Report
     report_path = pdf_report(
         input_image=original_img,
         processed_image=overlay_img,
@@ -578,10 +340,11 @@ def main():
         dsapt_compliance_score=dsapt_compliance_score,
         notes=notes,
         output_path=OUTPUT_PDF_PATH,
-        template_path=TEMPLATE_PATH
+        template_path=TEMPLATE_PATH,
     )
 
     print(f"PDF report generated successfully: {report_path}")
+
 
 # FastAPI Analysis Function
 def analyze_uploaded_file(file_bytes, filename):
@@ -590,47 +353,39 @@ def analyze_uploaded_file(file_bytes, filename):
     Returns analysis results, processed image bytes, and PDF bytes.
     """
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    # Check required files
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
-
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"PDF template not found: {TEMPLATE_PATH}")
 
-    # Load model
-    model = load_model(MODEL_PATH, device)
+    detector, device = _get_detector()
 
-    # Create temporary uploaded file
-    suffix = os.path.splitext(filename)[1]
+    suffix = os.path.splitext(filename)[1].lower()
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-        temp_file.write(file_bytes)
-        temp_path = temp_file.name
-
+    temp_path = None
     try:
-
-        # Process image
-        if is_image_file(temp_path):
-
-            original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps = process_image(
-                image_path=temp_path,
-                model=model,
+        if is_image_file(filename):
+            # Open image directly from bytes — no temp file needed.
+            original_img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+            result, detected_pixels, inference_time, fps, overlay_img, mask_img = detector.run_on_image(
+                original_img=original_img,
                 device=device,
-                threshold=THRESHOLD
+                threshold=THRESHOLD,
             )
+            print("Input type: Image")
+            print(f"Detected pixels: {detected_pixels}")
+            print(f"{detector.feature_name} detected: {result}")
 
-        # Process video
-        elif is_video_file(temp_path):
+        elif is_video_file(filename):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file.write(file_bytes)
+                temp_path = temp_file.name
 
             original_img, overlay_img, mask_img, result, detected_pixels, inference_time, fps = process_video(
                 video_path=temp_path,
-                model=model,
+                detector=detector,
                 device=device,
                 threshold=THRESHOLD,
                 frame_interval_seconds=FRAME_INTERVAL_SECONDS,
-                max_video_seconds=MAX_VIDEO_SECONDS
+                max_video_seconds=MAX_VIDEO_SECONDS,
             )
 
             if original_img is None:
@@ -639,70 +394,62 @@ def analyze_uploaded_file(file_bytes, filename):
         else:
             raise ValueError("Unsupported file type.")
 
-        # Accessibility Feature
         if result == "Yes":
-            accessibility_feature = "Accessibility Feature Detected: Tactile flooring"
+            accessibility_feature = detector.feature_name
         else:
-            accessibility_feature = "No Accessibility Feature Detected"
+            accessibility_feature = "None"
 
-        # DSAPT Contrast-Based Report Values
-        contrast_percentage, tactile_luminance, surrounding_luminance = calculate_luminance_contrast(
-            original_img,
-            mask_img
+        contrast_percentage, region_luminance, surrounding_luminance = detector.calculate_contrast(
+            original_img, mask_img
         )
 
-        dsapt_compliance_score, dsapt_compatibility_label, notes = get_dsapt_compatibility(
-            result=result,
-            contrast_percentage=contrast_percentage
+        dsapt_compliance_score, dsapt_compatibility_label, notes = detector.get_compatibility(
+            detected=result == "Yes",
+            contrast_percentage=contrast_percentage,
         )
 
-        print(f"Tactile area luminance: {tactile_luminance:.2f}")
+        print(f"Tactile area luminance: {region_luminance:.2f}")
         print(f"Surrounding area luminance: {surrounding_luminance:.2f}")
         print(f"Estimated luminance contrast: {contrast_percentage:.2f}%")
         print(f"DSAPT compatibility score: {dsapt_compliance_score}%")
         print(f"DSAPT compatibility label: {dsapt_compatibility_label}")
 
-        # Generate PDF Report
-        report_path = pdf_report(
+        # Generate PDF entirely in memory — no disk I/O, no race condition.
+        pdf_bytes = pdf_report(
             input_image=original_img,
             processed_image=overlay_img,
             accessibility_feature=accessibility_feature,
             dsapt_compliance_score=dsapt_compliance_score,
             notes=notes,
-            output_path=OUTPUT_PDF_PATH,
-            template_path=TEMPLATE_PATH
+            template_path=TEMPLATE_PATH,
         )
 
-        print(f"PDF report generated successfully: {report_path}")
+        print("PDF report generated successfully (in memory).")
 
-        # Convert overlay image to bytes
         overlay_pil = Image.fromarray(overlay_img)
-
         image_buffer = io.BytesIO()
         overlay_pil.save(image_buffer, format="PNG")
-
         output_image_bytes = image_buffer.getvalue()
 
-        # Convert PDF to bytes
-        with open(report_path, "rb") as pdf_file:
-            pdf_bytes = pdf_file.read()
+        input_buf = io.BytesIO()
+        original_img.save(input_buf, format="JPEG", quality=90)
+        input_image_bytes = input_buf.getvalue()
 
-        # Return results
         return {
             "has_tactile_flooring": result == "Yes",
             "compatibility_percentage": dsapt_compliance_score,
             "compatibility_label": dsapt_compatibility_label,
             "contrast_percentage": contrast_percentage,
             "notes": notes,
+            "input_image_data": input_image_bytes,
             "output_image_data": output_image_bytes,
             "report_pdf": pdf_bytes,
         }
 
     finally:
-
-        # Delete temporary uploaded file
-        if os.path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,94 @@
+# .github/workflows/windows-launcher-test.yml
+#
+# Tests start.ps1 and start.bat on real Windows runners.
+# Lives ONLY on the throwaway `ci-windows-test` branch — delete the branch when done.
+#
+# It runs each launcher in the background, then independently polls the two
+# servers the launcher is supposed to bring up. Verdict = did both respond.
+
+name: windows-launcher-test
+
+on:
+  push:
+    branches: [ ci-windows-test ]
+  workflow_dispatch: {}
+
+jobs:
+  launch:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        launcher: [ps1, bat]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run ${{ matrix.launcher }} launcher and verify both servers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          if ('${{ matrix.launcher }}' -eq 'ps1') {
+            $proc = Start-Process pwsh `
+              -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','.\start.ps1' `
+              -RedirectStandardOutput 'launcher.out.log' `
+              -RedirectStandardError  'launcher.err.log' `
+              -PassThru -WindowStyle Hidden
+          } else {
+            $proc = Start-Process cmd `
+              -ArgumentList '/c','start.bat' `
+              -RedirectStandardOutput 'launcher.out.log' `
+              -RedirectStandardError  'launcher.err.log' `
+              -PassThru -WindowStyle Hidden
+          }
+          Write-Host "Started $('${{ matrix.launcher }}') launcher (PID $($proc.Id)). Waiting for servers..."
+
+          function Test-Up($url) {
+            try { return (Invoke-WebRequest $url -UseBasicParsing -TimeoutSec 5).StatusCode -ge 200 }
+            catch { return $false }
+          }
+
+          $deadline   = (Get-Date).AddMinutes(20)
+          $backendUp  = $false
+          $frontendUp = $false
+
+          while ((Get-Date) -lt $deadline) {
+            if (-not $backendUp)  { $backendUp  = Test-Up 'http://127.0.0.1:8000/docs' }
+            if (-not $frontendUp) { $frontendUp = Test-Up 'http://localhost:3000' }
+            if ($backendUp -and $frontendUp) { break }
+            if ($proc.HasExited -and -not ($backendUp -and $frontendUp)) {
+              Write-Host "Launcher process exited (code $($proc.ExitCode)) before both servers were up."
+              Start-Sleep -Seconds 10
+              $backendUp  = $backendUp  -or (Test-Up 'http://127.0.0.1:8000/docs')
+              $frontendUp = $frontendUp -or (Test-Up 'http://localhost:3000')
+              break
+            }
+            Start-Sleep -Seconds 5
+          }
+
+          Write-Host "`n========== launcher stdout =========="
+          if (Test-Path launcher.out.log) { Get-Content launcher.out.log }
+          Write-Host "`n========== launcher stderr =========="
+          if (Test-Path launcher.err.log) { Get-Content launcher.err.log }
+
+          Get-Process node, python, uvicorn -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+
+          Write-Host "`nBackend  (http://127.0.0.1:8000/docs): $backendUp"
+          Write-Host "Frontend (http://localhost:3000):       $frontendUp"
+          if (-not ($backendUp -and $frontendUp)) {
+            Write-Error "FAIL: one or both servers did not come up. See launcher output above."
+            exit 1
+          }
+          Write-Host "`nSUCCESS: both servers responded. The $('${{ matrix.launcher }}') launcher works."
