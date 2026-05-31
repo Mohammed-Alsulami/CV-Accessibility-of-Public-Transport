@@ -1,3 +1,6 @@
+# All other text files: normalize line endings
+*       text=auto
+
 # Force Windows scripts to checkout with CRLF (cmd.exe requires it)
 *.bat   text eol=crlf
 *.cmd   text eol=crlf
@@ -5,6 +8,3 @@
 
 # Force Unix scripts to checkout with LF
 *.sh    text eol=lf
-
-# All other text files: let git handle per platform
-*       text=auto

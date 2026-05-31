@@ -36,7 +36,7 @@ if not exist frontend\package.json (
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Checking Python...
+echo ^>^>^> Checking Python...
 
 set PY_CMD=
 where py >nul 2>&1
@@ -60,7 +60,7 @@ for /f "tokens=*" %%V in ('%PY_CMD% --version 2^>^&1') do echo   Found: %%V
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Checking Node.js / npm...
+echo ^>^>^> Checking Node.js / npm...
 
 where npm >nul 2>&1
 if errorlevel 1 (
@@ -96,7 +96,7 @@ for %%D in (venv env .env venv3 .venv3 .venv_old) do (
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Checking virtual environment...
+echo ^>^>^> Checking virtual environment...
 
 set VENV_HEALTHY=0
 if exist ".venv\Scripts\python.exe" (
@@ -133,7 +133,7 @@ if exist ".venv\.deps-installed" (
 )
 
 if "%NEEDS_PIP%"=="1" (
-    echo >>> Installing backend dependencies...
+    echo ^>^>^> Installing backend dependencies...
     echo     ^(PyTorch is large - first install may take several minutes^)
     .venv\Scripts\python.exe -m pip install --upgrade pip --quiet
     .venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
@@ -144,7 +144,7 @@ if "%NEEDS_PIP%"=="1" (
     copy /y nul ".venv\.deps-installed" >nul
     echo   Backend dependencies installed.
 ) else (
-    echo >>> Backend dependencies are up to date, skipping pip install.
+    echo ^>^>^> Backend dependencies are up to date, skipping pip install.
 )
 
 :: ------------------------------------------------------------------
@@ -160,7 +160,7 @@ if exist "frontend\node_modules\.install-stamp" (
 )
 
 if "%NEEDS_NPM%"=="1" (
-    echo >>> Installing frontend dependencies...
+    echo ^>^>^> Installing frontend dependencies...
     cd frontend
     call npm ci 2>nul
     if errorlevel 1 call npm install
@@ -173,7 +173,7 @@ if "%NEEDS_NPM%"=="1" (
     cd ..
     echo   Frontend dependencies installed.
 ) else (
-    echo >>> Frontend dependencies are up to date, skipping npm install.
+    echo ^>^>^> Frontend dependencies are up to date, skipping npm install.
 )
 
 :: ------------------------------------------------------------------
@@ -181,7 +181,7 @@ if "%NEEDS_NPM%"=="1" (
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Checking for leftover processes...
+echo ^>^>^> Checking for leftover processes...
 
 for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr ":8000 " ^| findstr "LISTENING"') do taskkill /PID %%P /F >nul 2>&1
 for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr ":3000 " ^| findstr "LISTENING"') do taskkill /PID %%P /F >nul 2>&1
@@ -193,7 +193,7 @@ echo   Ports cleared.
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Starting backend  ->  http://127.0.0.1:8000
+echo ^>^>^> Starting backend  -^>  http://127.0.0.1:8000
 echo     ^(PyTorch model loading may take 2-3 min on first start^)
 
 if defined GITHUB_ACTIONS (
@@ -208,7 +208,7 @@ if defined GITHUB_ACTIONS (
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Starting frontend ->  http://localhost:3000
+echo ^>^>^> Starting frontend -^>  http://localhost:3000
 
 if defined GITHUB_ACTIONS (
     start "" /B cmd /c "cd frontend && set BROWSER=none && set GENERATE_SOURCEMAP=false && npm start"
@@ -221,7 +221,7 @@ if defined GITHUB_ACTIONS (
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Waiting for backend (up to 5 min)...
+echo ^>^>^> Waiting for backend (up to 5 min)...
 
 set TRIES=0
 :WAIT_BACKEND
@@ -242,7 +242,7 @@ echo   Backend is running.
 :: ------------------------------------------------------------------
 
 echo.
-echo >>> Waiting for frontend (up to 5 min)...
+echo ^>^>^> Waiting for frontend (up to 5 min)...
 
 set TRIES=0
 :WAIT_FRONTEND
@@ -275,6 +275,6 @@ echo   To stop: close the backend and frontend terminal windows.
 if defined GITHUB_ACTIONS exit /b 0
 
 echo.
-echo >>> Opening browser...
+echo ^>^>^> Opening browser...
 start "" "http://localhost:3000"
 pause
