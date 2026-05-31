@@ -109,7 +109,8 @@ if [ ! -d frontend/node_modules ] || \
    [ frontend/package.json -nt frontend/node_modules/.install-stamp ] || \
    { [ -f frontend/package-lock.json ] && [ frontend/package-lock.json -nt frontend/node_modules/.install-stamp ]; }; then
     echo "Installing frontend Node.js dependencies..."
-    (cd frontend && npm ci 2>/dev/null || npm install) && touch frontend/node_modules/.install-stamp
+    (cd frontend && npm ci 2>/dev/null || npm install) || _die "npm install failed. Check disk space (need ~500 MB free) and try again."
+    touch frontend/node_modules/.install-stamp
 else
     _info "Frontend dependencies up to date."
 fi
